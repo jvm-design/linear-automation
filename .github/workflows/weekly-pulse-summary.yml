@@ -8,7 +8,6 @@ on:
 jobs:
   post-summary:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Get issues and post summary
         env:
@@ -19,8 +18,6 @@ jobs:
           TODAY=$(date +%d/%m/%Y)
           WEEK_AGO=$(date -d '7 days ago' +%d/%m)
           
-          echo "Periode: $WEEK_AGO - $TODAY"
-          
           PROJECTS=$(curl -s -X POST https://api.linear.app/graphql \
             -H "Content-Type: application/json" \
             -H "Authorization: $LINEAR_API_KEY" \
@@ -29,135 +26,75 @@ jobs:
           echo "$PROJECTS" | jq -c '.data.projects.nodes[] | select(.name | test("^0[0-4] -"))' | while read -r project; do
             PROJECT_ID=$(echo "$project" | jq -r '.id')
             PROJECT_NAME=$(echo "$project" | jq -r '.name')
-            
             echo "Processing: $PROJECT_NAME"
             
-            # Get issues with title, description, labels, AND GitHub attachments
             ISSUES=$(curl -s -X POST https://api.linear.app/graphql \
               -H "Content-Type: application/json" \
               -H "Authorization: $LINEAR_API_KEY" \
-              -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title description labels { nodes { name } } attachments { nodes { title subtitle url sourceType } } } } } }\"}")
+              -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title description labels { nodes { name } } attachments { nodes { title sourceType } } } } } }\"}")
             
             TOTAL=$(echo "$ISSUES" | jq '.data.project.issues.nodes | length')
             
             if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" != "null" ]; then
-              echo "Found $TOTAL issues"
               
-              # Get BUGS with full context
-              BUGS_DATA=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))]')
+              BUGS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))]')
               BUGS_COUNT=$(echo "$BUGS_DATA" | jq 'length')
-              BUGS_IDS=$(echo "$BUGS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/,$//')
+              BUGS_IDS=$(echo "$BUGS_DATA" | jq -r '.[].identifier' | tr '\n' ',' | sed 's/,$//')
+              BUGS_INFO=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title) - \(.description // "" | gsub("\n";" ") | .[0:100])"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-400)
               
-              # Build bugs context for Claude
-              BUGS_CONTEXT=""
-              if [ "$BUGS_COUNT" -gt 0 ]; then
-                BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5] | .[] | "- \(.identifier): \(.title)\n  Description: \(.description // "N/A" | gsub("\n"; " ") | .[0:150])\n  GitHub: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | join(", ") // "N/A")"' 2>/dev/null | head -30)
-              fi
-              
-              # Get OTHERS with full context
-              OTHERS_DATA=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)]')
+              OTHERS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)]')
               OTHERS_COUNT=$(echo "$OTHERS_DATA" | jq 'length')
-              OTHERS_IDS=$(echo "$OTHERS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/,$//')
-              
-              # Build others context for Claude
-              OTHERS_CONTEXT=""
-              if [ "$OTHERS_COUNT" -gt 0 ]; then
-                OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5] | .[] | "- \(.identifier): \(.title)\n  Description: \(.description // "N/A" | gsub("\n"; " ") | .[0:150])\n  GitHub: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | join(", ") // "N/A")"' 2>/dev/null | head -30)
-              fi
-              
-              echo "Bugs: $BUGS_COUNT, Others: $OTHERS_COUNT"
+              OTHERS_IDS=$(echo "$OTHERS_DATA" | jq -r '.[].identifier' | tr '\n' ',' | sed 's/,$//')
+              OTHERS_INFO=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title) - \(.description // "" | gsub("\n";" ") | .[0:100])"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-400)
               
               BUGS_SUMMARY=""
               OTHERS_SUMMARY=""
               
-              # Generate BUGS summary with Claude
-              if [ "$BUGS_COUNT" -gt 0 ] && [ -n "$BUGS_CONTEXT" ]; then
-                PROMPT="Voici des bugs corriges cette semaine avec leur contexte (titre, description, PR GitHub). Resume en 2 phrases techniques et factuelles (max 25 mots total). Pas de commentaire sur l equipe. Juste ce qui a ete corrige techniquement.\n\n$BUGS_CONTEXT"
-                PROMPT_CLEAN=$(echo "$PROMPT" | tr -d '\n\r' | sed 's/"/\\"/g' | cut -c1-800)
-                
+              if [ "$BUGS_COUNT" -gt 0 ] && [ -n "$BUGS_INFO" ]; then
+                PROMPT="Resume en 1-2 phrases techniques (max 20 mots) ces bugs corriges. Sois factuel: $BUGS_INFO"
+                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-500)
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
-                
-                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-200)
-                echo "Bugs summary: $BUGS_SUMMARY"
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":80,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | cut -c1-150)
               fi
               
-              # Generate OTHERS summary with Claude
-              if [ "$OTHERS_COUNT" -gt 0 ] && [ -n "$OTHERS_CONTEXT" ]; then
-                PROMPT="Voici des ameliorations livrees cette semaine avec leur contexte (titre, description, PR GitHub). Resume en 2 phrases techniques et factuelles (max 25 mots total). Pas de commentaire sur l equipe. Juste ce qui a ete ajoute ou ameliore.\n\n$OTHERS_CONTEXT"
-                PROMPT_CLEAN=$(echo "$PROMPT" | tr -d '\n\r' | sed 's/"/\\"/g' | cut -c1-800)
-                
+              if [ "$OTHERS_COUNT" -gt 0 ] && [ -n "$OTHERS_INFO" ]; then
+                PROMPT="Resume en 1-2 phrases techniques (max 20 mots) ces ameliorations. Sois factuel: $OTHERS_INFO"
+                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-500)
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
-                
-                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-200)
-                echo "Others summary: $OTHERS_SUMMARY"
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":80,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | cut -c1-150)
               fi
               
-              # Build final body
+              NL=$'\n'
               BODY="Semaine $WEEK_AGO au $TODAY"
               
               if [ "$BUGS_COUNT" -gt 0 ]; then
-                BODY="$BODY\n\nBugs corriges: $BUGS_COUNT"
-                if [ -n "$BUGS_SUMMARY" ]; then
-                  BODY="$BODY\n$BUGS_SUMMARY"
-                fi
-                BODY="$BODY\nTickets: $BUGS_IDS"
+                BODY="${BODY}${NL}${NL}Bugs corriges: $BUGS_COUNT"
+                [ -n "$BUGS_SUMMARY" ] && BODY="${BODY}${NL}${BUGS_SUMMARY}"
+                BODY="${BODY}${NL}Tickets: $BUGS_IDS"
               fi
               
               if [ "$OTHERS_COUNT" -gt 0 ]; then
-                BODY="$BODY\n\nAmeliorations: $OTHERS_COUNT"
-                if [ -n "$OTHERS_SUMMARY" ]; then
-                  BODY="$BODY\n$OTHERS_SUMMARY"
-                fi
-                BODY="$BODY\nTickets: $OTHERS_IDS"
+                BODY="${BODY}${NL}${NL}Ameliorations: $OTHERS_COUNT"
+                [ -n "$OTHERS_SUMMARY" ] && BODY="${BODY}${NL}${OTHERS_SUMMARY}"
+                BODY="${BODY}${NL}Tickets: $OTHERS_IDS"
               fi
               
-              BODY=$(echo "$BODY" | sed 's/"/\\"/g')
-              
-              echo "Final: $BODY"
+              BODY_ESCAPED=$(echo "$BODY" | jq -Rsa . | sed 's/^"//;s/"$//')
               
               curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
-                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}"
+                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY_ESCAPED\\\" }) { success } }\"}"
               
               echo "Posted to $PROJECT_NAME"
-            else
-              echo "No issues, skipping"
             fi
-            echo ""
           done
-          
           echo "Done!"
-```
-
-## Ce que Claude reçoit maintenant
-```
-- TNS-621: Fix Image preview page asset
-  Description: Le preview ne s'affiche pas correctement sur iOS 17 lors du chargement...
-  GitHub: TNS-621 Fix Image preview page asset #391
-
-- TNS-619: Fix preview image autoya web
-  Description: Bug de rendu sur la webapp quand l'image dépasse 4K...
-  GitHub: fix/preview-web #389
-```
-
-## Résultat attendu sur Pulse
-```
-Semaine 13/01 au 20/01/2026
-
-Bugs corrigés: 5
-Correction du rendu preview iOS 17 et webapp 4K, fix de la 
-synchronisation audio dans le Studio.
-Tickets: TNS-621, TNS-619, TNS-582, TNS-580, TNS-575
-
-Améliorations: 1
-Ajout de 31 templates de prise de vue avec guidage visuel.
-Tickets: TNS-574
