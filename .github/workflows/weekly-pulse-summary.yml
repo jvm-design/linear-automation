@@ -51,34 +51,54 @@ jobs:
               OTHERS_SUMMARY=""
               
               if [ "$BUGS_COUNT" -gt 0 ]; then
-                BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "TICKET \(.identifier) - \(.title) DESC \(.description // "NA" | gsub("\n"; " ") | .[0:120]) PR \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' -- ' | cut -c1-700)
+                BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.title) - \(.description // "NA" | gsub("\n"; " ") | .[0:120]) - PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' | ' | cut -c1-700)
                 
-                PROMPT="Contexte bugs corriges cette semaine: ${BUGS_CONTEXT} --- Redige 1-2 phrases techniques et factuelles en francais, max 30 mots, expliquant CE QUI A ETE CORRIGE. Pas de commentaire sur lequipe."
-                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-800)
+                PROMPT_FILE=$(mktemp)
+                cat > "$PROMPT_FILE" << 'PROMPT_END'
+Voici le contexte des bugs corriges cette semaine (titres, descriptions, PRs GitHub).
+Redige un resume executif en francais de 1-2 phrases (max 30 mots).
+Sois factuel et technique. Decris CE QUI A ETE CORRIGE sans mentionner les numeros de tickets.
+Pas de commentaire sur lequipe.
+Contexte:
+PROMPT_END
+                echo "$BUGS_CONTEXT" >> "$PROMPT_FILE"
+                
+                PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
+                rm "$PROMPT_FILE"
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
                 
-                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-250)
+                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-250)
                 echo "Bugs summary: $BUGS_SUMMARY"
               fi
               
               if [ "$OTHERS_COUNT" -gt 0 ]; then
-                OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "TICKET \(.identifier) - \(.title) DESC \(.description // "NA" | gsub("\n"; " ") | .[0:120]) PR \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' -- ' | cut -c1-700)
+                OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.title) - \(.description // "NA" | gsub("\n"; " ") | .[0:120]) - PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' | ' | cut -c1-700)
                 
-                PROMPT="Contexte ameliorations livrees cette semaine: ${OTHERS_CONTEXT} --- Redige 1-2 phrases techniques et factuelles en francais, max 30 mots, expliquant CE QUI A ETE AJOUTE ou AMELIORE. Pas de commentaire sur lequipe."
-                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-800)
+                PROMPT_FILE=$(mktemp)
+                cat > "$PROMPT_FILE" << 'PROMPT_END'
+Voici le contexte des ameliorations livrees cette semaine (titres, descriptions, PRs GitHub).
+Redige un resume executif en francais de 1-2 phrases (max 30 mots).
+Sois factuel et technique. Decris CE QUI A ETE AJOUTE ou AMELIORE sans mentionner les numeros de tickets.
+Pas de commentaire sur lequipe.
+Contexte:
+PROMPT_END
+                echo "$OTHERS_CONTEXT" >> "$PROMPT_FILE"
+                
+                PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
+                rm "$PROMPT_FILE"
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
                 
-                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-250)
+                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-250)
                 echo "Others summary: $OTHERS_SUMMARY"
               fi
               
