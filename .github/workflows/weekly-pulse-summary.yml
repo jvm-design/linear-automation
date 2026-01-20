@@ -54,14 +54,11 @@ jobs:
                 BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.title) - \(.description // "NA" | gsub("\n"; " ") | .[0:120]) - PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' | ' | cut -c1-700)
                 
                 PROMPT_FILE=$(mktemp)
-                cat > "$PROMPT_FILE" << 'PROMPT_END'
-Voici le contexte des bugs corriges cette semaine (titres, descriptions, PRs GitHub).
-Redige un resume executif en francais de 1-2 phrases (max 30 mots).
-Sois factuel et technique. Decris CE QUI A ETE CORRIGE sans mentionner les numeros de tickets.
-Pas de commentaire sur lequipe.
-Contexte:
-PROMPT_END
-                echo "$BUGS_CONTEXT" >> "$PROMPT_FILE"
+                echo "Contexte bugs corriges cette semaine (titres, descriptions, PRs GitHub)." > "$PROMPT_FILE"
+                echo "Redige un resume executif en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
+                echo "Sois factuel et technique. Decris CE QUI A ETE CORRIGE sans mentionner les numeros de tickets." >> "$PROMPT_FILE"
+                echo "Pas de commentaire sur lequipe." >> "$PROMPT_FILE"
+                echo "Contexte: $BUGS_CONTEXT" >> "$PROMPT_FILE"
                 
                 PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
                 rm "$PROMPT_FILE"
@@ -80,14 +77,11 @@ PROMPT_END
                 OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.title) - \(.description // "NA" | gsub("\n"; " ") | .[0:120]) - PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' | ' | cut -c1-700)
                 
                 PROMPT_FILE=$(mktemp)
-                cat > "$PROMPT_FILE" << 'PROMPT_END'
-Voici le contexte des ameliorations livrees cette semaine (titres, descriptions, PRs GitHub).
-Redige un resume executif en francais de 1-2 phrases (max 30 mots).
-Sois factuel et technique. Decris CE QUI A ETE AJOUTE ou AMELIORE sans mentionner les numeros de tickets.
-Pas de commentaire sur lequipe.
-Contexte:
-PROMPT_END
-                echo "$OTHERS_CONTEXT" >> "$PROMPT_FILE"
+                echo "Contexte ameliorations livrees cette semaine (titres, descriptions, PRs GitHub)." > "$PROMPT_FILE"
+                echo "Redige un resume executif en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
+                echo "Sois factuel et technique. Decris CE QUI A ETE AJOUTE ou AMELIORE sans mentionner les numeros de tickets." >> "$PROMPT_FILE"
+                echo "Pas de commentaire sur lequipe." >> "$PROMPT_FILE"
+                echo "Contexte: $OTHERS_CONTEXT" >> "$PROMPT_FILE"
                 
                 PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
                 rm "$PROMPT_FILE"
