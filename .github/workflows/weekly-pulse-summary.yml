@@ -40,59 +40,59 @@ jobs:
               BUGS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))]')
               BUGS_COUNT=$(echo "$BUGS_DATA" | jq 'length')
               BUGS_IDS=$(echo "$BUGS_DATA" | jq -r '.[].identifier' | tr '\n' ',' | sed 's/,$//')
-              BUGS_INFO=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title) - \(.description // "" | gsub("\n";" ") | .[0:100])"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-400)
+              BUGS_INFO=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title)"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-300)
               
               OTHERS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)]')
               OTHERS_COUNT=$(echo "$OTHERS_DATA" | jq 'length')
               OTHERS_IDS=$(echo "$OTHERS_DATA" | jq -r '.[].identifier' | tr '\n' ',' | sed 's/,$//')
-              OTHERS_INFO=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title) - \(.description // "" | gsub("\n";" ") | .[0:100])"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-400)
+              OTHERS_INFO=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title)"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-300)
               
               BUGS_SUMMARY=""
               OTHERS_SUMMARY=""
               
               if [ "$BUGS_COUNT" -gt 0 ] && [ -n "$BUGS_INFO" ]; then
-                PROMPT="Resume en 1-2 phrases techniques (max 20 mots) ces bugs corriges. Sois factuel: $BUGS_INFO"
-                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-500)
+                PROMPT="Resume en 1 phrase technique max 15 mots ces bugs: $BUGS_INFO"
+                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-400)
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":80,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
-                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | cut -c1-150)
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":60,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-120)
               fi
               
               if [ "$OTHERS_COUNT" -gt 0 ] && [ -n "$OTHERS_INFO" ]; then
-                PROMPT="Resume en 1-2 phrases techniques (max 20 mots) ces ameliorations. Sois factuel: $OTHERS_INFO"
-                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-500)
+                PROMPT="Resume en 1 phrase technique max 15 mots ces ameliorations: $OTHERS_INFO"
+                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-400)
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":80,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
-                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | cut -c1-150)
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":60,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-120)
               fi
               
-              NL=$'\n'
+              # Build body with proper line breaks for Linear
               BODY="Semaine $WEEK_AGO au $TODAY"
               
               if [ "$BUGS_COUNT" -gt 0 ]; then
-                BODY="${BODY}${NL}${NL}Bugs corriges: $BUGS_COUNT"
-                [ -n "$BUGS_SUMMARY" ] && BODY="${BODY}${NL}${BUGS_SUMMARY}"
-                BODY="${BODY}${NL}Tickets: $BUGS_IDS"
+                BODY="$BODY\\n\\nBugs corriges: $BUGS_COUNT"
+                [ -n "$BUGS_SUMMARY" ] && BODY="$BODY\\n$BUGS_SUMMARY"
+                BODY="$BODY\\nTickets: $BUGS_IDS"
               fi
               
               if [ "$OTHERS_COUNT" -gt 0 ]; then
-                BODY="${BODY}${NL}${NL}Ameliorations: $OTHERS_COUNT"
-                [ -n "$OTHERS_SUMMARY" ] && BODY="${BODY}${NL}${OTHERS_SUMMARY}"
-                BODY="${BODY}${NL}Tickets: $OTHERS_IDS"
+                BODY="$BODY\\n\\nAmeliorations: $OTHERS_COUNT"
+                [ -n "$OTHERS_SUMMARY" ] && BODY="$BODY\\n$OTHERS_SUMMARY"
+                BODY="$BODY\\nTickets: $OTHERS_IDS"
               fi
               
-              BODY_ESCAPED=$(echo "$BODY" | jq -Rsa . | sed 's/^"//;s/"$//')
+              echo "Body: $BODY"
               
               curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
-                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY_ESCAPED\\\" }) { success } }\"}"
+                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}"
               
               echo "Posted to $PROJECT_NAME"
             fi
