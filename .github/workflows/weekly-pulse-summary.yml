@@ -37,12 +37,10 @@ jobs:
             
             if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" != "null" ]; then
               
-              # BUGS DATA
               BUGS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))]')
               BUGS_COUNT=$(echo "$BUGS_DATA" | jq 'length')
               BUGS_IDS=$(echo "$BUGS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/, $//')
               
-              # OTHERS DATA
               OTHERS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)]')
               OTHERS_COUNT=$(echo "$OTHERS_DATA" | jq 'length')
               OTHERS_IDS=$(echo "$OTHERS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/, $//')
@@ -52,144 +50,68 @@ jobs:
               BUGS_SUMMARY=""
               OTHERS_SUMMARY=""
               
-              # BUGS SUMMARY WITH REASONING
               if [ "$BUGS_COUNT" -gt 0 ]; then
-                # Build rich context file for bugs
-                BUGS_PROMPT_FILE=$(mktemp)
-                echo "Tu es tech lead. Analyse ces bugs corriges et leur impact technique." > "$BUGS_PROMPT_FILE"
-                echo "" >> "$BUGS_PROMPT_FILE"
+                BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "TICKET: \(.identifier) - \(.title) | DESC: \(.description // "NA" | gsub("\n"; " ") | .[0:120]) | PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' ## ' | cut -c1-700)
                 
-                echo "$BUGS_DATA" | jq -r '.[:5][] | "TICKET: \(.identifier) - \(.title)\nDESCRIPTION: \(.description // "Non renseignee" | gsub("\n"; " ") | .[0:150])\nPR GITHUB: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "Non liee")\n"' >> "$BUGS_PROMPT_FILE" 2>/dev/null
-                
-                echo "INSTRUCTIONS:" >> "$BUGS_PROMPT_FILE"
-                echo "1. Identifie le theme technique commun" >> "$BUGS_PROMPT_FILE"
-                echo "2. Redige 1-2 phrases factuelles max 30 mots" >> "$BUGS_PROMPT_FILE"
-                echo "3. Explique CE QUI A ETE CORRIGE techniquement" >> "$BUGS_PROMPT_FILE"
-                echo "4. Pas de commentaire sur equipe ou progres" >> "$BUGS_PROMPT_FILE"
-                echo "" >> "$BUGS_PROMPT_FILE"
-                echo "RESUME:" >> "$BUGS_PROMPT_FILE"
-                
-                BUGS_PROMPT=$(cat "$BUGS_PROMPT_FILE" | tr -cd 'a-zA-Z0-9 .,;:\n-' | tr '\n' ' ' | cut -c1-800)
-                rm "$BUGS_PROMPT_FILE"
-                
-                echo "Bugs prompt: $BUGS_PROMPT"
+                PROMPT="Tech lead analysis. Bugs fixed: $BUGS_CONTEXT --- Instructions: 1. Find common technical theme 2. Write 1-2 factual sentences max 30 words 3. Explain WHAT WAS FIXED technically 4. No team comments. Summary:"
+                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,;:#|-' | cut -c1-800)
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$BUGS_PROMPT\"}]}")
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
                 
                 BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,;:-' | cut -c1-250)
                 echo "Bugs summary: $BUGS_SUMMARY"
               fi
               
-              # OTHERS SUMMARY WITH REASONING
               if [ "$OTHERS_COUNT" -gt 0 ]; then
-                # Build rich context file for others
-                OTHERS_PROMPT_FILE=$(mktemp)
-                echo "Tu es tech lead. Analyse ces ameliorations livrees et leur impact technique." > "$OTHERS_PROMPT_FILE"
-                echo "" >> "$OTHERS_PROMPT_FILE"
+                OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "TICKET: \(.identifier) - \(.title) | DESC: \(.description // "NA" | gsub("\n"; " ") | .[0:120]) | PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' ## ' | cut -c1-700)
                 
-                echo "$OTHERS_DATA" | jq -r '.[:5][] | "TICKET: \(.identifier) - \(.title)\nDESCRIPTION: \(.description // "Non renseignee" | gsub("\n"; " ") | .[0:150])\nPR GITHUB: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "Non liee")\n"' >> "$OTHERS_PROMPT_FILE" 2>/dev/null
-                
-                echo "INSTRUCTIONS:" >> "$OTHERS_PROMPT_FILE"
-                echo "1. Identifie le theme technique commun" >> "$OTHERS_PROMPT_FILE"
-                echo "2. Redige 1-2 phrases factuelles max 30 mots" >> "$OTHERS_PROMPT_FILE"
-                echo "3. Explique CE QUI A ETE AJOUTE ou AMELIORE" >> "$OTHERS_PROMPT_FILE"
-                echo "4. Pas de commentaire sur equipe ou progres" >> "$OTHERS_PROMPT_FILE"
-                echo "" >> "$OTHERS_PROMPT_FILE"
-                echo "RESUME:" >> "$OTHERS_PROMPT_FILE"
-                
-                OTHERS_PROMPT=$(cat "$OTHERS_PROMPT_FILE" | tr -cd 'a-zA-Z0-9 .,;:\n-' | tr '\n' ' ' | cut -c1-800)
-                rm "$OTHERS_PROMPT_FILE"
-                
-                echo "Others prompt: $OTHERS_PROMPT"
+                PROMPT="Tech lead analysis. Features delivered: $OTHERS_CONTEXT --- Instructions: 1. Find common technical theme 2. Write 1-2 factual sentences max 30 words 3. Explain WHAT WAS ADDED or IMPROVED 4. No team comments. Summary:"
+                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,;:#|-' | cut -c1-800)
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$OTHERS_PROMPT\"}]}")
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
                 
                 OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,;:-' | cut -c1-250)
                 echo "Others summary: $OTHERS_SUMMARY"
               fi
               
-              # BUILD FINAL BODY WITH STRUCTURE
               BODY_FILE=$(mktemp)
-              
               echo "Semaine $WEEK_AGO au $TODAY" > "$BODY_FILE"
               
               if [ "$BUGS_COUNT" -gt 0 ]; then
                 echo "" >> "$BODY_FILE"
                 echo "Bugs corriges: $BUGS_COUNT" >> "$BODY_FILE"
-                if [ -n "$BUGS_SUMMARY" ]; then
-                  echo "$BUGS_SUMMARY" >> "$BODY_FILE"
-                fi
+                [ -n "$BUGS_SUMMARY" ] && echo "$BUGS_SUMMARY" >> "$BODY_FILE"
                 echo "Tickets: $BUGS_IDS" >> "$BODY_FILE"
               fi
               
               if [ "$OTHERS_COUNT" -gt 0 ]; then
                 echo "" >> "$BODY_FILE"
                 echo "Ameliorations: $OTHERS_COUNT" >> "$BODY_FILE"
-                if [ -n "$OTHERS_SUMMARY" ]; then
-                  echo "$OTHERS_SUMMARY" >> "$BODY_FILE"
-                fi
+                [ -n "$OTHERS_SUMMARY" ] && echo "$OTHERS_SUMMARY" >> "$BODY_FILE"
                 echo "Tickets: $OTHERS_IDS" >> "$BODY_FILE"
               fi
               
               BODY_CONTENT=$(cat "$BODY_FILE")
-              echo "===== FINAL BODY ====="
+              echo "Final body:"
               echo "$BODY_CONTENT"
-              echo "======================"
               
-              # POST TO LINEAR
               QUERY=$(jq -n --arg pid "$PROJECT_ID" --arg body "$BODY_CONTENT" '{query: "mutation($input: ProjectUpdateCreateInput!) { projectUpdateCreate(input: $input) { success } }", variables: {input: {projectId: $pid, body: $body}}}')
               
-              RESULT=$(curl -s -X POST https://api.linear.app/graphql \
+              curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
-                -d "$QUERY")
+                -d "$QUERY"
               
-              echo "Result: $RESULT"
               rm "$BODY_FILE"
               echo "Posted to $PROJECT_NAME"
-              echo ""
             fi
           done
           echo "Done!"
-```
-
-## Ce que Claude reçoit maintenant
-```
-Tu es tech lead. Analyse ces bugs corriges et leur impact technique.
-
-TICKET: TNS-621 - Fix Image preview page asset
-DESCRIPTION: Le preview ne saffiche pas correctement sur iOS 17 lors du chargement dimages superieures a 2MB
-PR GITHUB: TNS-621 Fix Image preview page asset #391
-
-TICKET: TNS-619 - Fix preview image autoya web
-DESCRIPTION: Bug de rendu sur Safari avec les images WebP qui ne saffichent pas
-PR GITHUB: fix/preview-web #389
-
-INSTRUCTIONS:
-1. Identifie le theme technique commun
-2. Redige 1-2 phrases factuelles max 30 mots
-3. Explique CE QUI A ETE CORRIGE techniquement
-4. Pas de commentaire sur equipe ou progres
-
-RESUME:
-```
-
-## Résultat attendu sur Linear
-```
-Semaine 13/01 au 20/01/2026
-
-Bugs corriges: 5
-Correction du rendu des images volumineuses sur iOS 17 et du support WebP sur Safari. Resolution des problemes de synchronisation audio-video.
-Tickets: TNS-621, TNS-619, TNS-582, TNS-575, TNS-574
-
-Ameliorations: 1
-Implementation de la capture automatisee avec 31 templates de prise de vue et guidage visuel.
-Tickets: TNS-580
