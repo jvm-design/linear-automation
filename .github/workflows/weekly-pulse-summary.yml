@@ -39,62 +39,98 @@ jobs:
             ISSUES=$(curl -s -X POST https://api.linear.app/graphql \
               -H "Content-Type: application/json" \
               -H "Authorization: $LINEAR_API_KEY" \
-              -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title assignee { name } labels { nodes { name } } } } } }\"}")
+              -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title labels { nodes { name } } } } } }\"}")
             
             TOTAL=$(echo "$ISSUES" | jq '.data.project.issues.nodes | length')
             
             if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" != "null" ]; then
               echo "Found $TOTAL issues"
               
-              # Get bugs and others counts
+              # Get bugs
+              BUGS_TITLES=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | .[].title' 2>/dev/null | head -5)
+              BUGS_IDS=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | .[].identifier' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
               BUGS_COUNT=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | length')
+              
+              # Get others  
+              OTHERS_TITLES=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)] | .[].title' 2>/dev/null | head -5)
+              OTHERS_IDS=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)] | .[].identifier' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
               OTHERS_COUNT=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)] | length')
               
-              # Get simple list of ticket IDs
-              TICKETS=$(echo "$ISSUES" | jq -r '.data.project.issues.nodes[].identifier' | tr '\n' ', ' | sed 's/,$//')
-              
               echo "Bugs: $BUGS_COUNT, Others: $OTHERS_COUNT"
-              echo "Tickets: $TICKETS"
               
-              # Simple prompt without special chars
-              PROMPT="Genere un resume executif en francais de 2 phrases pour ce projet. Cette semaine: $BUGS_COUNT bugs corriges et $OTHERS_COUNT autres tickets termines. Tickets: $TICKETS"
+              # Build prompt for Claude - factual only
+              PROMPT="Tu dois generer un resume factuel et technique. Pas de phrases vides sur l equipe. Juste les faits.
+
+Bugs corriges ($BUGS_COUNT): $BUGS_TITLES
+Ameliorations ($OTHERS_COUNT): $OTHERS_TITLES
+
+Reponds UNIQUEMENT dans ce format exact (garde les emojis et sauts de ligne):
+
+[Si bugs > 0]
+Bug: [une phrase technique de 10 mots max resumant les corrections]
+
+[Si ameliorations > 0]  
+Ameliorations: [une phrase technique de 10 mots max resumant les ajouts]
+
+Exemple de bonne reponse:
+Bug: Correction du probleme de synchronisation audio et preview image.
+Ameliorations: Ajout des templates photo et optimisation du workflow mobile.
+
+Exemple de mauvaise reponse (NE PAS FAIRE):
+L equipe a fait d excellents progres cette semaine..."
               
-              echo "Calling Claude..."
+              # Call Claude
+              PROMPT_ESCAPED=$(echo "$PROMPT" | jq -Rsa .)
               
-              # Call Claude with simple JSON
               CLAUDE_RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
                 -H "Content-Type: application/json" \
                 -H "x-api-key: $ANTHROPIC_API_KEY" \
                 -H "anthropic-version: 2023-06-01" \
                 -d "{
                   \"model\": \"claude-sonnet-4-20250514\",
-                  \"max_tokens\": 200,
-                  \"messages\": [{
-                    \"role\": \"user\",
-                    \"content\": \"$PROMPT\"
-                  }]
+                  \"max_tokens\": 150,
+                  \"messages\": [{\"role\": \"user\", \"content\": $PROMPT_ESCAPED}]
                 }")
               
-              echo "Claude response: $CLAUDE_RESPONSE"
-              
               SUMMARY=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // empty')
+              echo "Claude summary: $SUMMARY"
               
-              if [ -z "$SUMMARY" ]; then
-                echo "Claude error, using fallback"
-                SUMMARY="$BUGS_COUNT bugs corriges, $OTHERS_COUNT autres tickets termines: $TICKETS"
+              # Build structured body
+              BODY="Semaine $WEEK_AGO au $TODAY\n\n"
+              
+              if [ "$BUGS_COUNT" -gt 0 ]; then
+                BODY="${BODY}Bugs corriges: $BUGS_COUNT\n"
               fi
               
-              echo "Summary: $SUMMARY"
+              if [ "$OTHERS_COUNT" -gt 0 ]; then
+                BODY="${BODY}Ameliorations: $OTHERS_COUNT\n"
+              fi
               
-              # Clean for Linear
-              BODY="Semaine $WEEK_AGO au $TODAY - $SUMMARY"
-              BODY=$(echo "$BODY" | sed 's/"/\\"/g' | tr -d '\n' | cut -c1-500)
+              if [ -n "$SUMMARY" ]; then
+                BODY="${BODY}\n$SUMMARY\n"
+              fi
+              
+              BODY="${BODY}\nTickets: "
+              if [ -n "$BUGS_IDS" ]; then
+                BODY="${BODY}$BUGS_IDS"
+                if [ -n "$OTHERS_IDS" ]; then
+                  BODY="${BODY}, "
+                fi
+              fi
+              if [ -n "$OTHERS_IDS" ]; then
+                BODY="${BODY}$OTHERS_IDS"
+              fi
+              
+              # Clean for Linear API
+              BODY=$(echo "$BODY" | sed 's/"/\\"/g')
+              
+              echo "Final body: $BODY"
               
               # Post to Linear
-              curl -s -X POST https://api.linear.app/graphql \
+              RESULT=$(curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
-                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}"
+                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}")
               
               echo "Posted to $PROJECT_NAME"
             else
@@ -104,3 +140,16 @@ jobs:
           done
           
           echo "Done!"
+```
+
+## Résultat attendu
+```
+📊 Semaine 13/01 au 20/01/2026
+
+🐛 Bugs corrigés: 5
+✨ Améliorations: 1
+
+Bug: Correction des problèmes de preview image et synchronisation assets.
+Améliorations: Ajout de la séquence de prise de photo templates.
+
+Tickets: TNS-621, TNS-619, TNS-582, TNS-580, TNS-575, TNS-574
