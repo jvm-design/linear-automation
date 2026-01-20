@@ -51,10 +51,10 @@ jobs:
               OTHERS_SUMMARY=""
               
               if [ "$BUGS_COUNT" -gt 0 ]; then
-                BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "TICKET: \(.identifier) - \(.title) | DESC: \(.description // "NA" | gsub("\n"; " ") | .[0:120]) | PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' ## ' | cut -c1-700)
+                BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "TICKET \(.identifier) - \(.title) DESC \(.description // "NA" | gsub("\n"; " ") | .[0:120]) PR \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' -- ' | cut -c1-700)
                 
-                PROMPT="Tech lead analysis. Bugs fixed: $BUGS_CONTEXT --- Instructions: 1. Find common technical theme 2. Write 1-2 factual sentences max 30 words 3. Explain WHAT WAS FIXED technically 4. No team comments. Summary:"
-                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,;:#|-' | cut -c1-800)
+                PROMPT="Tech lead analysis of bugs fixed this week. Context: ${BUGS_CONTEXT} --- Write 1-2 factual technical sentences max 30 words explaining WHAT WAS FIXED. No team comments."
+                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-800)
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
@@ -62,15 +62,15 @@ jobs:
                   -H "anthropic-version: 2023-06-01" \
                   -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
                 
-                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,;:-' | cut -c1-250)
+                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-250)
                 echo "Bugs summary: $BUGS_SUMMARY"
               fi
               
               if [ "$OTHERS_COUNT" -gt 0 ]; then
-                OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "TICKET: \(.identifier) - \(.title) | DESC: \(.description // "NA" | gsub("\n"; " ") | .[0:120]) | PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' ## ' | cut -c1-700)
+                OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "TICKET \(.identifier) - \(.title) DESC \(.description // "NA" | gsub("\n"; " ") | .[0:120]) PR \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' -- ' | cut -c1-700)
                 
-                PROMPT="Tech lead analysis. Features delivered: $OTHERS_CONTEXT --- Instructions: 1. Find common technical theme 2. Write 1-2 factual sentences max 30 words 3. Explain WHAT WAS ADDED or IMPROVED 4. No team comments. Summary:"
-                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,;:#|-' | cut -c1-800)
+                PROMPT="Tech lead analysis of features delivered this week. Context: ${OTHERS_CONTEXT} --- Write 1-2 factual technical sentences max 30 words explaining WHAT WAS ADDED or IMPROVED. No team comments."
+                PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-800)
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
@@ -78,7 +78,7 @@ jobs:
                   -H "anthropic-version: 2023-06-01" \
                   -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
                 
-                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,;:-' | cut -c1-250)
+                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-250)
                 echo "Others summary: $OTHERS_SUMMARY"
               fi
               
