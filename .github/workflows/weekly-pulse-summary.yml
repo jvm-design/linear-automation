@@ -16,7 +16,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           #!/bin/bash
-          set -e
           
           SINCE=$(date -d '7 days ago' -u +%Y-%m-%dT%H:%M:%SZ)
           TODAY=$(date +%d/%m/%Y)
@@ -42,47 +41,66 @@ jobs:
               -H "Authorization: $LINEAR_API_KEY" \
               -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title assignee { name } labels { nodes { name } } } } } }\"}")
             
-            # Count issues
             TOTAL=$(echo "$ISSUES" | jq '.data.project.issues.nodes | length')
             
             if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" != "null" ]; then
               echo "Found $TOTAL issues"
               
-              # Get bugs
-              BUGS_LIST=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | .[] | "- \(.identifier): \(.title)"' 2>/dev/null | head -10)
+              # Get bugs and others counts
               BUGS_COUNT=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | length')
-              
-              # Get others
-              OTHERS_LIST=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)] | .[] | "- \(.identifier): \(.title)"' 2>/dev/null | head -10)
               OTHERS_COUNT=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)] | length')
               
+              # Get simple list of ticket IDs
+              TICKETS=$(echo "$ISSUES" | jq -r '.data.project.issues.nodes[].identifier' | tr '\n' ', ' | sed 's/,$//')
+              
               echo "Bugs: $BUGS_COUNT, Others: $OTHERS_COUNT"
+              echo "Tickets: $TICKETS"
               
-              # Build prompt for Claude
-              PROMPT="Resume en 3 phrases max pour un update projet. Bugs corriges ($BUGS_COUNT): $BUGS_LIST. Autres tickets ($OTHERS_COUNT): $OTHERS_LIST. Format: 1 ligne bugs, 1 ligne autres, 1 ligne conclusion."
+              # Simple prompt without special chars
+              PROMPT="Genere un resume executif en francais de 2 phrases pour ce projet. Cette semaine: $BUGS_COUNT bugs corriges et $OTHERS_COUNT autres tickets termines. Tickets: $TICKETS"
               
-              # Call Claude
-              CLAUDE=$(curl -s https://api.anthropic.com/v1/messages \
+              echo "Calling Claude..."
+              
+              # Call Claude with simple JSON
+              CLAUDE_RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
                 -H "Content-Type: application/json" \
                 -H "x-api-key: $ANTHROPIC_API_KEY" \
                 -H "anthropic-version: 2023-06-01" \
-                -d "{\"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 300, \"messages\": [{\"role\": \"user\", \"content\": \"$PROMPT\"}]}")
+                -d "{
+                  \"model\": \"claude-sonnet-4-20250514\",
+                  \"max_tokens\": 200,
+                  \"messages\": [{
+                    \"role\": \"user\",
+                    \"content\": \"$PROMPT\"
+                  }]
+                }")
               
-              SUMMARY=$(echo "$CLAUDE" | jq -r '.content[0].text // "Resume non disponible"' | tr -d '\n' | cut -c1-400)
+              echo "Claude response: $CLAUDE_RESPONSE"
+              
+              SUMMARY=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // empty')
+              
+              if [ -z "$SUMMARY" ]; then
+                echo "Claude error, using fallback"
+                SUMMARY="$BUGS_COUNT bugs corriges, $OTHERS_COUNT autres tickets termines: $TICKETS"
+              fi
+              
+              echo "Summary: $SUMMARY"
+              
+              # Clean for Linear
+              BODY="Semaine $WEEK_AGO au $TODAY - $SUMMARY"
+              BODY=$(echo "$BODY" | sed 's/"/\\"/g' | tr -d '\n' | cut -c1-500)
               
               # Post to Linear
-              BODY="Semaine $WEEK_AGO au $TODAY - $SUMMARY"
-              BODY=$(echo "$BODY" | sed 's/"/\\"/g')
-              
-              RESULT=$(curl -s -X POST https://api.linear.app/graphql \
+              curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
-                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}")
+                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}"
               
               echo "Posted to $PROJECT_NAME"
             else
               echo "No issues, skipping"
             fi
+            echo ""
           done
           
           echo "Done!"
