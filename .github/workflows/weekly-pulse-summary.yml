@@ -55,8 +55,9 @@ jobs:
                 
                 PROMPT_FILE=$(mktemp)
                 echo "Contexte bugs corriges cette semaine (titres, descriptions, PRs GitHub)." > "$PROMPT_FILE"
-                echo "Redige un resume executif en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
-                echo "Sois factuel et technique. Decris CE QUI A ETE CORRIGE sans mentionner les numeros de tickets." >> "$PROMPT_FILE"
+                echo "Redige un resume en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
+                echo "Ton: decontracte mais professionnel, facile a comprendre pour tous." >> "$PROMPT_FILE"
+                echo "Decris CE QUI A ETE CORRIGE sans jargon technique complexe, sans numeros de tickets." >> "$PROMPT_FILE"
                 echo "Pas de commentaire sur lequipe." >> "$PROMPT_FILE"
                 echo "Contexte: $BUGS_CONTEXT" >> "$PROMPT_FILE"
                 
@@ -78,8 +79,9 @@ jobs:
                 
                 PROMPT_FILE=$(mktemp)
                 echo "Contexte ameliorations livrees cette semaine (titres, descriptions, PRs GitHub)." > "$PROMPT_FILE"
-                echo "Redige un resume executif en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
-                echo "Sois factuel et technique. Decris CE QUI A ETE AJOUTE ou AMELIORE sans mentionner les numeros de tickets." >> "$PROMPT_FILE"
+                echo "Redige un resume en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
+                echo "Ton: decontracte mais professionnel, facile a comprendre pour tous." >> "$PROMPT_FILE"
+                echo "Decris CE QUI A ETE AJOUTE ou AMELIORE sans jargon technique complexe, sans numeros de tickets." >> "$PROMPT_FILE"
                 echo "Pas de commentaire sur lequipe." >> "$PROMPT_FILE"
                 echo "Contexte: $OTHERS_CONTEXT" >> "$PROMPT_FILE"
                 
