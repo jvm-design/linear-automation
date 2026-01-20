@@ -1,0 +1,77 @@
+name: Weekly Linear Pulse Summary
+
+on:
+  # Chaque vendredi à 17h Paris (16h UTC en hiver, 15h UTC en été)
+  schedule:
+    - cron: '0 16 * * 5'
+  
+  # Test manuel
+  workflow_dispatch:
+
+jobs:
+  post-summary:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Get completed issues and post to Pulse
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          # Date d'il y a 7 jours
+          SINCE=$(date -d '7 days ago' -u +%Y-%m-%dT%H:%M:%SZ)
+          TODAY=$(date +%d/%m/%Y)
+          WEEK_AGO=$(date -d '7 days ago' +%d/%m)
+          
+          # Projets Linear
+          declare -A PROJECTS
+          PROJECTS=(
+            ["8c9b4d3e7025"]="00 - Core"
+            ["9bd395bd3840"]="01 - Autoya"
+            ["1f69bc0d8b09"]="02 - WorkflowAuto"
+            ["a4d68923a824"]="03 - Tools IA"
+          )
+          
+          for PROJECT_ID in "${!PROJECTS[@]}"; do
+            PROJECT_NAME="${PROJECTS[$PROJECT_ID]}"
+            echo "📦 Processing: $PROJECT_NAME"
+            
+            # Récupérer les issues complétées cette semaine pour ce projet
+            RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+              -H "Content-Type: application/json" \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -d "{
+                \"query\": \"query { project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title completedAt assignee { name } } } } }\"
+              }")
+            
+            # Parser les issues
+            ISSUES=$(echo "$RESPONSE" | jq -r '.data.project.issues.nodes[] | "- **\(.identifier)** \(.title) — \(.assignee.name // "Non assigné")"' 2>/dev/null)
+            COUNT=$(echo "$RESPONSE" | jq '.data.project.issues.nodes | length' 2>/dev/null)
+            
+            if [ "$COUNT" -gt 0 ] 2>/dev/null; then
+              echo "  Found $COUNT issues"
+              
+              # Construire le résumé
+              BODY="## 🚀 Résumé de la semaine\\n\\n"
+              BODY+="**Période:** ${WEEK_AGO} → ${TODAY}\\n\\n"
+              BODY+="**${COUNT} tickets complétés**\\n\\n"
+              BODY+="### Tickets\\n\\n"
+              BODY+=$(echo "$ISSUES" | sed 's/$/\\n/g' | tr -d '\n')
+              BODY+="\\n---\\n_Généré automatiquement_"
+              
+              # Poster sur Pulse
+              curl -s -X POST https://api.linear.app/graphql \
+                -H "Content-Type: application/json" \
+                -H "Authorization: $LINEAR_API_KEY" \
+                -d "{
+                  \"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success projectUpdate { url } } }\"
+                }"
+              
+              echo "  ✅ Posted to $PROJECT_NAME"
+            else
+              echo "  ⏭️ No completed issues, skipping"
+            fi
+            
+            echo ""
+          done
+          
+          echo "🎉 Done!"
