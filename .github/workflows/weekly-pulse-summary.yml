@@ -53,7 +53,7 @@ jobs:
               if [ "$BUGS_COUNT" -gt 0 ]; then
                 BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "TICKET \(.identifier) - \(.title) DESC \(.description // "NA" | gsub("\n"; " ") | .[0:120]) PR \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' -- ' | cut -c1-700)
                 
-                PROMPT="Tech lead analysis of bugs fixed this week. Context: ${BUGS_CONTEXT} --- Write 1-2 factual technical sentences max 30 words explaining WHAT WAS FIXED. No team comments."
+                PROMPT="Contexte bugs corriges cette semaine: ${BUGS_CONTEXT} --- Redige 1-2 phrases techniques et factuelles en francais, max 30 mots, expliquant CE QUI A ETE CORRIGE. Pas de commentaire sur lequipe."
                 PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-800)
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
@@ -69,7 +69,7 @@ jobs:
               if [ "$OTHERS_COUNT" -gt 0 ]; then
                 OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "TICKET \(.identifier) - \(.title) DESC \(.description // "NA" | gsub("\n"; " ") | .[0:120]) PR \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "NA")"' 2>/dev/null | tr '\n' ' -- ' | cut -c1-700)
                 
-                PROMPT="Tech lead analysis of features delivered this week. Context: ${OTHERS_CONTEXT} --- Write 1-2 factual technical sentences max 30 words explaining WHAT WAS ADDED or IMPROVED. No team comments."
+                PROMPT="Contexte ameliorations livrees cette semaine: ${OTHERS_CONTEXT} --- Redige 1-2 phrases techniques et factuelles en francais, max 30 mots, expliquant CE QUI A ETE AJOUTE ou AMELIORE. Pas de commentaire sur lequipe."
                 PROMPT_CLEAN=$(echo "$PROMPT" | tr -cd 'a-zA-Z0-9 .,:;-' | cut -c1-800)
                 
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
