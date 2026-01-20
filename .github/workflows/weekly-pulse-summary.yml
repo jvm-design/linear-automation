@@ -18,49 +18,59 @@ jobs:
           TODAY=$(date +%d/%m/%Y)
           WEEK_AGO=$(date -d '7 days ago' +%d/%m)
           
-          # Projets Linear
-          declare -A PROJECTS
-          PROJECTS=(
-            ["8c9b4d3e7025"]="00 - Core"
-            ["9bd395bd3840"]="01 - Autoya"
-            ["1f69bc0d8b09"]="02 - WorkflowAuto"
-            ["a4d68923a824"]="03 - Tools IA"
-          )
+          echo "📅 Période: $WEEK_AGO → $TODAY"
+          echo ""
           
-          for PROJECT_ID in "${!PROJECTS[@]}"; do
-            PROJECT_NAME="${PROJECTS[$PROJECT_ID]}"
+          # Récupérer tous les projets avec leurs vrais UUIDs
+          PROJECTS_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -d '{"query": "{ projects { nodes { id name } } }"}')
+          
+          echo "Projects found:"
+          echo "$PROJECTS_RESPONSE" | jq -r '.data.projects.nodes[] | "  - \(.name): \(.id)"'
+          echo ""
+          
+          # Pour chaque projet
+          echo "$PROJECTS_RESPONSE" | jq -c '.data.projects.nodes[]' | while read -r project; do
+            PROJECT_ID=$(echo "$project" | jq -r '.id')
+            PROJECT_NAME=$(echo "$project" | jq -r '.name')
+            
             echo "📦 Processing: $PROJECT_NAME"
             
-            # Récupérer les issues complétées
-            RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            # Récupérer les issues complétées cette semaine
+            ISSUES_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
               -H "Content-Type: application/json" \
               -H "Authorization: $LINEAR_API_KEY" \
-              -d "{
-                \"query\": \"query { project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title assignee { name } } } } }\"
-              }")
+              -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title assignee { name } } } } }\"}")
             
-            COUNT=$(echo "$RESPONSE" | jq '.data.project.issues.nodes | length' 2>/dev/null || echo "0")
+            COUNT=$(echo "$ISSUES_RESPONSE" | jq '.data.project.issues.nodes | length' 2>/dev/null || echo "0")
             echo "  Found $COUNT issues"
             
-            if [ "$COUNT" -gt 0 ] 2>/dev/null; then
+            if [ "$COUNT" -gt 0 ] && [ "$COUNT" != "null" ]; then
               
-              # Construire la liste des issues (une seule ligne, séparées par des tirets)
-              ISSUES_LIST=$(echo "$RESPONSE" | jq -r '.data.project.issues.nodes[] | "• \(.identifier) \(.title) (\(.assignee.name // "Non assigné"))"' 2>/dev/null | tr '\n' ' | ' | sed 's/ | $//')
+              # Liste simple des tickets
+              ISSUES_LIST=$(echo "$ISSUES_RESPONSE" | jq -r '.data.project.issues.nodes[] | "\(.identifier) \(.title)"' 2>/dev/null | head -10 | tr '\n' ', ' | sed 's/,$//')
               
-              # Body simple sans sauts de ligne problématiques
-              BODY="Résumé ${WEEK_AGO} au ${TODAY} - ${COUNT} tickets complétés: ${ISSUES_LIST}"
+              # Body simple
+              BODY="Semaine du ${WEEK_AGO} au ${TODAY} - ${COUNT} tickets completes: ${ISSUES_LIST}"
               
-              # Échapper les guillemets
-              BODY=$(echo "$BODY" | sed 's/"/\\"/g')
+              # Nettoyer les caractères problématiques
+              BODY=$(echo "$BODY" | sed 's/[\"\\]//g' | tr -d '\n' | cut -c1-500)
               
               # Poster sur Pulse
               RESULT=$(curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
-                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}")
+                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success projectUpdate { id } } }\"}")
               
-              echo "  $RESULT"
-              echo "  ✅ Posted to $PROJECT_NAME"
+              SUCCESS=$(echo "$RESULT" | jq -r '.data.projectUpdateCreate.success' 2>/dev/null)
+              
+              if [ "$SUCCESS" == "true" ]; then
+                echo "  ✅ Posted to $PROJECT_NAME"
+              else
+                echo "  ❌ Error: $RESULT"
+              fi
             else
               echo "  ⏭️ No completed issues, skipping"
             fi
