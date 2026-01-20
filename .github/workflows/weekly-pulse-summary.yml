@@ -2,7 +2,6 @@ name: Weekly Linear Pulse Summary
 
 on:
   schedule:
-    # Vendredi 18h Paris = 17h UTC (hiver) / 16h UTC (été)
     - cron: '0 17 * * 5'
   workflow_dispatch:
 
@@ -11,113 +10,79 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Get completed issues and post to Pulse
+      - name: Get issues and post summary
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          #!/bin/bash
+          set -e
+          
           SINCE=$(date -d '7 days ago' -u +%Y-%m-%dT%H:%M:%SZ)
           TODAY=$(date +%d/%m/%Y)
           WEEK_AGO=$(date -d '7 days ago' +%d/%m)
           
-          echo "📅 Période: $WEEK_AGO → $TODAY"
-          echo ""
+          echo "Periode: $WEEK_AGO - $TODAY"
           
-          # Récupérer tous les projets
-          PROJECTS_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+          # Get all projects
+          PROJECTS=$(curl -s -X POST https://api.linear.app/graphql \
             -H "Content-Type: application/json" \
             -H "Authorization: $LINEAR_API_KEY" \
             -d '{"query": "{ projects { nodes { id name } } }"}')
           
-          # Filtrer seulement les projets principaux (00, 01, 02, 03)
-          echo "$PROJECTS_RESPONSE" | jq -c '.data.projects.nodes[] | select(.name | test("^0[0-4] -"))' | while read -r project; do
+          echo "$PROJECTS" | jq -c '.data.projects.nodes[] | select(.name | test("^0[0-4] -"))' | while read -r project; do
             PROJECT_ID=$(echo "$project" | jq -r '.id')
             PROJECT_NAME=$(echo "$project" | jq -r '.name')
             
-            echo "📦 Processing: $PROJECT_NAME"
+            echo "Processing: $PROJECT_NAME"
             
-            # Récupérer TOUTES les issues complétées avec leurs labels
-            ISSUES_RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            # Get completed issues with labels
+            ISSUES=$(curl -s -X POST https://api.linear.app/graphql \
               -H "Content-Type: application/json" \
               -H "Authorization: $LINEAR_API_KEY" \
               -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title assignee { name } labels { nodes { name } } } } } }\"}")
             
-            # Séparer BUGS et AUTRES
-            BUGS=$(echo "$ISSUES_RESPONSE" | jq -r '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | unique_by(.identifier)')
-            OTHERS=$(echo "$ISSUES_RESPONSE" | jq -r '[.data.project.issues.nodes[] | select((.labels.nodes | map(.name) | map(test("bug"; "i")) | any) | not)] | unique_by(.identifier)')
+            # Count issues
+            TOTAL=$(echo "$ISSUES" | jq '.data.project.issues.nodes | length')
             
-            BUGS_COUNT=$(echo "$BUGS" | jq 'length')
-            OTHERS_COUNT=$(echo "$OTHERS" | jq 'length')
-            
-            echo "  🐛 Bugs: $BUGS_COUNT"
-            echo "  ✨ Autres: $OTHERS_COUNT"
-            
-            TOTAL=$((BUGS_COUNT + OTHERS_COUNT))
-            
-            if [ "$TOTAL" -gt 0 ]; then
+            if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" != "null" ]; then
+              echo "Found $TOTAL issues"
               
-              # Préparer les listes pour Claude
-              BUGS_LIST=$(echo "$BUGS" | jq -r '.[] | "- \(.identifier): \(.title)"' | head -15)
-              OTHERS_LIST=$(echo "$OTHERS" | jq -r '.[] | "- \(.identifier): \(.title)"' | head -15)
+              # Get bugs
+              BUGS_LIST=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | .[] | "- \(.identifier): \(.title)"' 2>/dev/null | head -10)
+              BUGS_COUNT=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))] | length')
               
-              # Appeler Claude pour générer le résumé exécutif
-              CLAUDE_PROMPT="Tu es un assistant qui rédige des résumés exécutifs concis pour des updates de projet.
-
-Voici les tickets complétés cette semaine pour le projet ${PROJECT_NAME}:
-
-BUGS CORRIGÉS (${BUGS_COUNT}):
-${BUGS_LIST}
-
-AUTRES TICKETS (${OTHERS_COUNT}):
-${OTHERS_LIST}
-
-Génère un résumé exécutif en français avec:
-1. Un titre accrocheur avec emoji
-2. Une section '🐛 Bugs corrigés' (2-3 phrases résumant les corrections importantes)
-3. Une section '✨ Améliorations' (2-3 phrases résumant les autres tickets)
-4. Une ligne de conclusion
-
-Format: texte simple, pas de markdown complexe. Maximum 500 caractères."
-
-              # Échapper le prompt pour JSON
-              CLAUDE_PROMPT_ESCAPED=$(echo "$CLAUDE_PROMPT" | jq -Rs '.')
+              # Get others
+              OTHERS_LIST=$(echo "$ISSUES" | jq -r '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)] | .[] | "- \(.identifier): \(.title)"' 2>/dev/null | head -10)
+              OTHERS_COUNT=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)] | length')
               
-              CLAUDE_RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+              echo "Bugs: $BUGS_COUNT, Others: $OTHERS_COUNT"
+              
+              # Build prompt for Claude
+              PROMPT="Resume en 3 phrases max pour un update projet. Bugs corriges ($BUGS_COUNT): $BUGS_LIST. Autres tickets ($OTHERS_COUNT): $OTHERS_LIST. Format: 1 ligne bugs, 1 ligne autres, 1 ligne conclusion."
+              
+              # Call Claude
+              CLAUDE=$(curl -s https://api.anthropic.com/v1/messages \
                 -H "Content-Type: application/json" \
                 -H "x-api-key: $ANTHROPIC_API_KEY" \
                 -H "anthropic-version: 2023-06-01" \
-                -d "{
-                  \"model\": \"claude-sonnet-4-20250514\",
-                  \"max_tokens\": 600,
-                  \"messages\": [{\"role\": \"user\", \"content\": $CLAUDE_PROMPT_ESCAPED}]
-                }")
+                -d "{\"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 300, \"messages\": [{\"role\": \"user\", \"content\": \"$PROMPT\"}]}")
               
-              SUMMARY=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // "Erreur génération résumé"')
+              SUMMARY=$(echo "$CLAUDE" | jq -r '.content[0].text // "Resume non disponible"' | tr -d '\n' | cut -c1-400)
               
-              echo "  📝 Résumé généré"
+              # Post to Linear
+              BODY="Semaine $WEEK_AGO au $TODAY - $SUMMARY"
+              BODY=$(echo "$BODY" | sed 's/"/\\"/g')
               
-              # Nettoyer pour Linear
-              BODY="Semaine du ${WEEK_AGO} au ${TODAY}\n\n${SUMMARY}"
-              BODY=$(echo "$BODY" | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/\\n/\\n/g' | cut -c1-1000)
-              
-              # Poster sur Pulse
               RESULT=$(curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
                 -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}")
               
-              SUCCESS=$(echo "$RESULT" | jq -r '.data.projectUpdateCreate.success // false')
-              
-              if [ "$SUCCESS" == "true" ]; then
-                echo "  ✅ Posted to $PROJECT_NAME"
-              else
-                echo "  ❌ Error: $RESULT"
-              fi
+              echo "Posted to $PROJECT_NAME"
             else
-              echo "  ⏭️ No completed issues, skipping"
+              echo "No issues, skipping"
             fi
-            
-            echo ""
           done
           
-          echo "🎉 Done!"
+          echo "Done!"
