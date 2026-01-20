@@ -37,64 +37,121 @@ jobs:
             
             if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" != "null" ]; then
               
+              # BUGS
               BUGS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))]')
               BUGS_COUNT=$(echo "$BUGS_DATA" | jq 'length')
-              BUGS_IDS=$(echo "$BUGS_DATA" | jq -r '.[].identifier' | tr '\n' ',' | sed 's/,$//')
-              BUGS_INFO=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title)"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-300)
+              BUGS_IDS=$(echo "$BUGS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/, $//')
               
+              # Build rich context for bugs
+              BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.identifier): \(.title). Description: \(.description // "N/A" | gsub("\n"; " ") | .[0:150]). GitHub PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "N/A")"' 2>/dev/null | tr '\n' ' | ' | sed 's/ | $//' | cut -c1-600)
+              
+              # OTHERS
               OTHERS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)]')
               OTHERS_COUNT=$(echo "$OTHERS_DATA" | jq 'length')
-              OTHERS_IDS=$(echo "$OTHERS_DATA" | jq -r '.[].identifier' | tr '\n' ',' | sed 's/,$//')
-              OTHERS_INFO=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.identifier) \(.title)"' 2>/dev/null | tr '\n' '; ' | sed 's/; $//' | cut -c1-300)
+              OTHERS_IDS=$(echo "$OTHERS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/, $//')
+              
+              # Build rich context for others
+              OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.identifier): \(.title). Description: \(.description // "N/A" | gsub("\n"; " ") | .[0:150]). GitHub PR: \([.attachments.nodes[] | select(.sourceType == "github") | .title] | first // "N/A")"' 2>/dev/null | tr '\n' ' | ' | sed 's/ | $//' | cut -c1-600)
+              
+              echo "Bugs: $BUGS_COUNT"
+              echo "Others: $OTHERS_COUNT"
               
               BUGS_SUMMARY=""
               OTHERS_SUMMARY=""
               
-              if [ "$BUGS_COUNT" -gt 0 ] && [ -n "$BUGS_INFO" ]; then
-                PROMPT="Resume en 1 phrase technique max 15 mots ces bugs: $BUGS_INFO"
-                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-400)
+              # Generate BUGS summary with reasoning
+              if [ "$BUGS_COUNT" -gt 0 ] && [ -n "$BUGS_CONTEXT" ]; then
+                PROMPT="Tu es tech lead. Voici des bugs corriges avec titre, description et PR GitHub: $BUGS_CONTEXT --- Analyse limpact technique et redige 1-2 phrases factuelles (max 25 mots) sur CE QUI A ETE CORRIGE. Pas de commentaire sur lequipe. Juste les faits techniques."
+                PROMPT_CLEAN=$(echo "$PROMPT" | sed "s/[^a-zA-Z0-9 .,;:'-]//g" | cut -c1-700)
+                
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":60,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
-                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-120)
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                
+                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | sed "s/[^a-zA-Z0-9 .,;:'-]//g" | cut -c1-200)
+                echo "Bugs summary: $BUGS_SUMMARY"
               fi
               
-              if [ "$OTHERS_COUNT" -gt 0 ] && [ -n "$OTHERS_INFO" ]; then
-                PROMPT="Resume en 1 phrase technique max 15 mots ces ameliorations: $OTHERS_INFO"
-                PROMPT_CLEAN=$(echo "$PROMPT" | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-400)
+              # Generate OTHERS summary with reasoning
+              if [ "$OTHERS_COUNT" -gt 0 ] && [ -n "$OTHERS_CONTEXT" ]; then
+                PROMPT="Tu es tech lead. Voici des ameliorations livrees avec titre, description et PR GitHub: $OTHERS_CONTEXT --- Analyse limpact technique et redige 1-2 phrases factuelles (max 25 mots) sur CE QUI A ETE AJOUTE ou AMELIORE. Pas de commentaire sur lequipe. Juste les faits techniques."
+                PROMPT_CLEAN=$(echo "$PROMPT" | sed "s/[^a-zA-Z0-9 .,;:'-]//g" | cut -c1-700)
+                
                 RESP=$(curl -s https://api.anthropic.com/v1/messages \
                   -H "Content-Type: application/json" \
                   -H "x-api-key: $ANTHROPIC_API_KEY" \
                   -H "anthropic-version: 2023-06-01" \
-                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":60,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
-                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n"' | sed 's/[^a-zA-Z0-9 .,;:-]//g' | cut -c1-120)
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"$PROMPT_CLEAN\"}]}")
+                
+                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | sed "s/[^a-zA-Z0-9 .,;:'-]//g" | cut -c1-200)
+                echo "Others summary: $OTHERS_SUMMARY"
               fi
               
-              # Build body with proper line breaks for Linear
-              BODY="Semaine $WEEK_AGO au $TODAY"
+              # Build body with real newlines
+              BODY_FILE=$(mktemp)
+              
+              echo "Semaine $WEEK_AGO au $TODAY" > "$BODY_FILE"
               
               if [ "$BUGS_COUNT" -gt 0 ]; then
-                BODY="$BODY\\n\\nBugs corriges: $BUGS_COUNT"
-                [ -n "$BUGS_SUMMARY" ] && BODY="$BODY\\n$BUGS_SUMMARY"
-                BODY="$BODY\\nTickets: $BUGS_IDS"
+                echo "" >> "$BODY_FILE"
+                echo "Bugs corriges: $BUGS_COUNT" >> "$BODY_FILE"
+                [ -n "$BUGS_SUMMARY" ] && echo "$BUGS_SUMMARY" >> "$BODY_FILE"
+                echo "Tickets: $BUGS_IDS" >> "$BODY_FILE"
               fi
               
               if [ "$OTHERS_COUNT" -gt 0 ]; then
-                BODY="$BODY\\n\\nAmeliorations: $OTHERS_COUNT"
-                [ -n "$OTHERS_SUMMARY" ] && BODY="$BODY\\n$OTHERS_SUMMARY"
-                BODY="$BODY\\nTickets: $OTHERS_IDS"
+                echo "" >> "$BODY_FILE"
+                echo "Ameliorations: $OTHERS_COUNT" >> "$BODY_FILE"
+                [ -n "$OTHERS_SUMMARY" ] && echo "$OTHERS_SUMMARY" >> "$BODY_FILE"
+                echo "Tickets: $OTHERS_IDS" >> "$BODY_FILE"
               fi
               
-              echo "Body: $BODY"
+              BODY_CONTENT=$(cat "$BODY_FILE")
+              echo "Body:"
+              echo "$BODY_CONTENT"
               
-              curl -s -X POST https://api.linear.app/graphql \
+              QUERY=$(jq -n \
+                --arg pid "$PROJECT_ID" \
+                --arg body "$BODY_CONTENT" \
+                '{query: "mutation($input: ProjectUpdateCreateInput!) { projectUpdateCreate(input: $input) { success } }", variables: {input: {projectId: $pid, body: $body}}}')
+              
+              RESULT=$(curl -s -X POST https://api.linear.app/graphql \
                 -H "Content-Type: application/json" \
                 -H "Authorization: $LINEAR_API_KEY" \
-                -d "{\"query\": \"mutation { projectUpdateCreate(input: { projectId: \\\"$PROJECT_ID\\\", body: \\\"$BODY\\\" }) { success } }\"}"
+                -d "$QUERY")
               
+              echo "Result: $RESULT"
+              rm "$BODY_FILE"
               echo "Posted to $PROJECT_NAME"
             fi
           done
           echo "Done!"
+```
+
+## Ce que Claude reçoit maintenant
+```
+Tu es tech lead. Voici des bugs corriges avec titre, description et PR GitHub:
+
+TNS-621: Fix Image preview page asset. Description: Le preview ne saffiche pas 
+correctement sur iOS 17 lors du chargement dimages superieures a 2MB. GitHub PR: 
+TNS-621 Fix Image preview page asset #391 | TNS-619: Fix preview image autoya web. 
+Description: Bug de rendu sur Safari avec les images WebP. GitHub PR: fix/preview-web #389
+
+--- 
+
+Analyse limpact technique et redige 1-2 phrases factuelles sur CE QUI A ETE CORRIGE.
+```
+
+## Résultat attendu
+```
+Semaine 13/01 au 20/01/2026
+
+Bugs corriges: 5
+Correction du rendu des images volumineuses sur iOS 17 et du support WebP sur Safari.
+Tickets: TNS-621, TNS-619, TNS-582, TNS-575, TNS-574
+
+Ameliorations: 1
+Implementation de la capture automatisee avec templates de prise de vue.
+Tickets: TNS-580
