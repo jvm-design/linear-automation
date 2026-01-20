@@ -28,10 +28,31 @@ jobs:
             PROJECT_NAME=$(echo "$project" | jq -r '.name')
             echo "Processing: $PROJECT_NAME"
             
-            ISSUES=$(curl -s -X POST https://api.linear.app/graphql \
+            # Get current active cycle for this project's team
+            CYCLE_RESP=$(curl -s -X POST https://api.linear.app/graphql \
               -H "Content-Type: application/json" \
               -H "Authorization: $LINEAR_API_KEY" \
-              -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title description labels { nodes { name } } attachments { nodes { title sourceType } } } } } }\"}")
+              -d '{"query": "{ cycles(filter: { isActive: { eq: true } }) { nodes { id number startsAt endsAt } } }"}')
+            
+            CYCLE_ID=$(echo "$CYCLE_RESP" | jq -r '.data.cycles.nodes[0].id // empty')
+            CYCLE_START=$(echo "$CYCLE_RESP" | jq -r '.data.cycles.nodes[0].startsAt // empty')
+            CYCLE_END=$(echo "$CYCLE_RESP" | jq -r '.data.cycles.nodes[0].endsAt // empty')
+            
+            echo "Active cycle: $CYCLE_ID (from $CYCLE_START to $CYCLE_END)"
+            
+            # Filter issues by cycle date range
+            if [ -n "$CYCLE_START" ]; then
+              ISSUES=$(curl -s -X POST https://api.linear.app/graphql \
+                -H "Content-Type: application/json" \
+                -H "Authorization: $LINEAR_API_KEY" \
+                -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$CYCLE_START\\\" } }) { nodes { identifier title description labels { nodes { name } } attachments { nodes { title sourceType } } } } } }\"}")
+            else
+              # Fallback to last 7 days if no active cycle
+              ISSUES=$(curl -s -X POST https://api.linear.app/graphql \
+                -H "Content-Type: application/json" \
+                -H "Authorization: $LINEAR_API_KEY" \
+                -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\" } }) { nodes { identifier title description labels { nodes { name } } attachments { nodes { title sourceType } } } } } }\"}")
+            fi
             
             TOTAL=$(echo "$ISSUES" | jq '.data.project.issues.nodes | length')
             
@@ -99,7 +120,13 @@ jobs:
               fi
               
               BODY_FILE=$(mktemp)
-              echo "Semaine $WEEK_AGO au $TODAY" > "$BODY_FILE"
+              if [ -n "$CYCLE_START" ]; then
+                CYCLE_START_FMT=$(date -d "$CYCLE_START" +%d/%m 2>/dev/null || echo "$CYCLE_START")
+                CYCLE_END_FMT=$(date -d "$CYCLE_END" +%d/%m 2>/dev/null || echo "$CYCLE_END")
+                echo "Cycle du $CYCLE_START_FMT au $CYCLE_END_FMT" > "$BODY_FILE"
+              else
+                echo "Semaine $WEEK_AGO au $TODAY" > "$BODY_FILE"
+              fi
               
               if [ "$BUGS_COUNT" -gt 0 ]; then
                 echo "" >> "$BODY_FILE"
