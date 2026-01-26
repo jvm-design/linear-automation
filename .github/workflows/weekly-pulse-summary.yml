@@ -2,7 +2,7 @@ name: Weekly Linear Pulse Summary
 
 on:
   schedule:
-    - cron: '0 17 * * 5'
+    - cron: '0 15 * * 5'  # Every Friday at 16:00 Paris time (15:00 UTC)
   workflow_dispatch:
 
 jobs:
