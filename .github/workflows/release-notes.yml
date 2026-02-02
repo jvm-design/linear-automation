@@ -221,15 +221,15 @@ jobs:
             rm "$BODY_FILE"
           }
           
-          # Post to each initiative
+          # Post to each initiative (using full UUIDs, not slugIds)
           # Croissance Auto 2026: 01 - AUTOYA, 02 - WorkflowAuto, API
-          post_to_initiative "274d97a8fbdf" "$CROISSANCE_AUTO_TICKETS" "Croissance Auto 2026"
+          post_to_initiative "ff21dc28-954e-418b-bb5f-75b7c9611ad5" "$CROISSANCE_AUTO_TICKETS" "Croissance Auto 2026"
           
           # Croissance Ecole: 03 - Tools IA, 04 - Studio, Deprecated
-          post_to_initiative "6869cb219990" "$CROISSANCE_ECOLE_TICKETS" "Croissance Ecole"
+          post_to_initiative "d8eb8411-3c67-4ae7-a09c-d0a2211f78fe" "$CROISSANCE_ECOLE_TICKETS" "Croissance Ecole"
           
-          # Performance & Scalabilité: 00 - Core
-          post_to_initiative "e946641224bc" "$PERFORMANCE_TICKETS" "Performance & Scalabilite"
+          # Performance & Scalabilite: 00 - Core
+          post_to_initiative "c650aba4-c8ba-4151-a15f-df355c3ff1df" "$PERFORMANCE_TICKETS" "Performance & Scalabilite"
           
           echo ""
           echo "=== Done ==="
