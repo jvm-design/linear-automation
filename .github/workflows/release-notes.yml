@@ -1,0 +1,220 @@
+name: Release Notes to Linear Initiatives
+
+on:
+  repository_dispatch:
+    types: [production-deploy]
+  workflow_dispatch:  # Manuel (backup)
+    inputs:
+      repo:
+        description: 'Repository (tns-web or tns-mobile)'
+        required: false
+        default: 'all'
+
+jobs:
+  release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deployments and post release notes
+        env:
+          TNS_WEB_TOKEN: ${{ secrets.TNS_WEB_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TRIGGER_REPO: ${{ github.event.client_payload.repo || github.event.inputs.repo || 'all' }}
+        run: |
+          # Initialize arrays for each initiative (global across repos)
+          CROISSANCE_AUTO_TICKETS=""
+          CROISSANCE_ECOLE_TICKETS=""
+          PERFORMANCE_TICKETS=""
+          
+          TODAY=$(date +%d/%m/%Y)
+          
+          echo "Trigger repo: $TRIGGER_REPO"
+          
+          # Function to process a repo's deployments
+          process_repo() {
+            local REPO=$1
+            local WORKFLOW=$2
+            
+            echo ""
+            echo "=========================================="
+            echo "Processing: $REPO"
+            echo "=========================================="
+            
+            # Get latest successful production deployments
+            RUNS=$(curl -s -H "Authorization: token $TNS_WEB_TOKEN" \
+              "https://api.github.com/repos/TheNextPlayground/$REPO/actions/workflows/$WORKFLOW/runs?status=success&per_page=5")
+            
+            LATEST_SHA=$(echo "$RUNS" | jq -r '.workflow_runs[0].head_sha')
+            LATEST_DATE=$(echo "$RUNS" | jq -r '.workflow_runs[0].created_at')
+            PREVIOUS_SHA=$(echo "$RUNS" | jq -r '.workflow_runs[1].head_sha')
+            
+            echo "Latest deployment: $LATEST_SHA at $LATEST_DATE"
+            echo "Previous deployment: $PREVIOUS_SHA"
+            
+            # Check if we have valid data
+            if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" == "null" ]; then
+              echo "Could not get latest deployment SHA for $REPO"
+              return
+            fi
+            
+            if [ "$LATEST_SHA" == "$PREVIOUS_SHA" ] || [ -z "$PREVIOUS_SHA" ] || [ "$PREVIOUS_SHA" == "null" ]; then
+              echo "No new deployment to process for $REPO"
+              return
+            fi
+            
+            # Get commits between deployments
+            echo "Getting commits between $PREVIOUS_SHA and $LATEST_SHA"
+            
+            COMMITS=$(curl -s -H "Authorization: token $TNS_WEB_TOKEN" \
+              "https://api.github.com/repos/TheNextPlayground/$REPO/compare/${PREVIOUS_SHA}...${LATEST_SHA}")
+            
+            # Extract Linear IDs from commit messages
+            LOCAL_LINEAR_IDS=$(echo "$COMMITS" | jq -r '.commits[].commit.message' | grep -oE 'TNS-[0-9]+' | sort -u)
+            
+            if [ -z "$LOCAL_LINEAR_IDS" ]; then
+              echo "No Linear tickets found in commits for $REPO"
+              return
+            fi
+            
+            echo "Found Linear IDs: $LOCAL_LINEAR_IDS"
+            
+            # For each Linear ID, get the project and categorize
+            for TICKET_ID in $LOCAL_LINEAR_IDS; do
+              echo "Processing: $TICKET_ID"
+              
+              TICKET_DATA=$(curl -s -X POST https://api.linear.app/graphql \
+                -H "Content-Type: application/json" \
+                -H "Authorization: $LINEAR_API_KEY" \
+                -d "{\"query\": \"{ issue(id: \\\"$TICKET_ID\\\") { identifier title description project { name } } }\"}")
+              
+              PROJECT=$(echo "$TICKET_DATA" | jq -r '.data.issue.project.name // "Unknown"')
+              TITLE=$(echo "$TICKET_DATA" | jq -r '.data.issue.title // "Unknown"')
+              
+              echo "  Project: $PROJECT, Title: $TITLE"
+              
+              TICKET_LINE="$TICKET_ID: $TITLE"
+              
+              # Categorize by project
+              # Croissance Auto 2026: 01 - AUTOYA, 02 - WorkflowAuto, API
+              # Croissance Ecole: 03 - Tools IA, 04 - Studio, Deprecated
+              # Performance & Scalabilité: 00 - Core
+              case "$PROJECT" in
+                *"01 - AUTOYA"*|*"02 - WorkflowAuto"*|*"API"*|*AUTOYA*|*Autoya*|*WorkflowAuto*|*Workflow*)
+                  CROISSANCE_AUTO_TICKETS="$CROISSANCE_AUTO_TICKETS|$TICKET_LINE"
+                  echo "  -> Croissance Auto 2026"
+                  ;;
+                *"03 - Tools"*|*"04 - Studio"*|*"Deprecated"*|*Tools*|*Studio*)
+                  CROISSANCE_ECOLE_TICKETS="$CROISSANCE_ECOLE_TICKETS|$TICKET_LINE"
+                  echo "  -> Croissance Ecole"
+                  ;;
+                *"00 - Core"*|*Core*)
+                  PERFORMANCE_TICKETS="$PERFORMANCE_TICKETS|$TICKET_LINE"
+                  echo "  -> Performance & Scalabilite"
+                  ;;
+                *)
+                  echo "  -> Unknown project, skipping"
+                  ;;
+              esac
+            done
+          }
+          
+          # Process repos based on trigger
+          if [ "$TRIGGER_REPO" == "tns-web" ]; then
+            process_repo "tns-web" "deploy-production-hook.yml"
+          elif [ "$TRIGGER_REPO" == "tns-mobile" ]; then
+            process_repo "tns-mobile" "deploy-production-hook.yml"
+          else
+            # Process both repos
+            process_repo "tns-web" "deploy-production-hook.yml"
+            process_repo "tns-mobile" "deploy-production-hook.yml"
+          fi
+          
+          echo ""
+          echo "=========================================="
+          echo "Posting to Initiatives"
+          echo "=========================================="
+          
+          # Function to post to initiative
+          post_to_initiative() {
+            local INITIATIVE_ID=$1
+            local TICKETS=$2
+            local INITIATIVE_NAME=$3
+            
+            if [ -z "$TICKETS" ] || [ "$TICKETS" == "|" ]; then
+              echo "No tickets for $INITIATIVE_NAME"
+              return
+            fi
+            
+            # Clean tickets list
+            TICKETS_CLEAN=$(echo "$TICKETS" | sed 's/^|//' | tr '|' '\n')
+            TICKETS_COUNT=$(echo "$TICKETS_CLEAN" | grep -c . || echo "0")
+            TICKETS_LIST=$(echo "$TICKETS_CLEAN" | sed 's/^/- /')
+            TICKETS_ONELINE=$(echo "$TICKETS_CLEAN" | tr '\n' '; ' | sed 's/; $//')
+            
+            if [ "$TICKETS_COUNT" -eq 0 ]; then
+              echo "No tickets for $INITIATIVE_NAME"
+              return
+            fi
+            
+            echo ""
+            echo "=== Posting to $INITIATIVE_NAME ($TICKETS_COUNT tickets) ==="
+            
+            # Generate summary with Claude
+            PROMPT_FILE=$(mktemp)
+            echo "Tu es un tech lead. Resume ce deploiement production avec ces tickets:" > "$PROMPT_FILE"
+            echo "$TICKETS_ONELINE" >> "$PROMPT_FILE"
+            echo "Ecris 1-2 phrases factuelles (max 30 mots) decrivant ce qui a ete deploye." >> "$PROMPT_FILE"
+            echo "Ton: professionnel mais accessible. Pas de jargon. Pas de commentaire sur l'equipe." >> "$PROMPT_FILE"
+            
+            PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
+            rm "$PROMPT_FILE"
+            
+            CLAUDE_RESP=$(curl -s https://api.anthropic.com/v1/messages \
+              -H "Content-Type: application/json" \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
+            
+            SUMMARY=$(echo "$CLAUDE_RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-250)
+            echo "Summary: $SUMMARY"
+            
+            # Build body
+            BODY_FILE=$(mktemp)
+            echo "Deploiement Production - $TODAY" > "$BODY_FILE"
+            echo "" >> "$BODY_FILE"
+            echo "Changements deployes ($TICKETS_COUNT):" >> "$BODY_FILE"
+            echo "$TICKETS_LIST" >> "$BODY_FILE"
+            echo "" >> "$BODY_FILE"
+            if [ -n "$SUMMARY" ]; then
+              echo "Resume: $SUMMARY" >> "$BODY_FILE"
+            fi
+            
+            BODY_CONTENT=$(cat "$BODY_FILE")
+            echo "Body content:"
+            echo "$BODY_CONTENT"
+            
+            # Post to Linear Initiative
+            QUERY=$(jq -n --arg iid "$INITIATIVE_ID" --arg body "$BODY_CONTENT" \
+              '{query: "mutation($input: InitiativeUpdateCreateInput!) { initiativeUpdateCreate(input: $input) { success } }", variables: {input: {initiativeId: $iid, body: $body}}}')
+            
+            RESULT=$(curl -s -X POST https://api.linear.app/graphql \
+              -H "Content-Type: application/json" \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -d "$QUERY")
+            
+            echo "Result: $RESULT"
+            rm "$BODY_FILE"
+          }
+          
+          # Post to each initiative
+          # Croissance Auto 2026: 01 - AUTOYA, 02 - WorkflowAuto, API
+          post_to_initiative "274d97a8fbdf" "$CROISSANCE_AUTO_TICKETS" "Croissance Auto 2026"
+          
+          # Croissance Ecole: 03 - Tools IA, 04 - Studio, Deprecated
+          post_to_initiative "6869cb219990" "$CROISSANCE_ECOLE_TICKETS" "Croissance Ecole"
+          
+          # Performance & Scalabilité: 00 - Core
+          post_to_initiative "e946641224bc" "$PERFORMANCE_TICKETS" "Performance & Scalabilite"
+          
+          echo ""
+          echo "=== Done ==="
