@@ -92,12 +92,13 @@ jobs:
               
               echo "  Project: $PROJECT, Title: $TITLE"
               
-              TICKET_LINE="$TICKET_ID: $TITLE"
+              # Store ticket with project name for grouping (format: PROJECT|||TICKET_ID: TITLE)
+              TICKET_LINE="$PROJECT|||$TICKET_ID: $TITLE"
               
               # Categorize by project
               # Croissance Auto 2026: 01 - AUTOYA, 02 - WorkflowAuto, API
               # Croissance Ecole: 03 - Tools IA, 04 - Studio, Deprecated
-              # Performance & Scalabilité: 00 - Core
+              # Performance & Scalabilite: 00 - Core
               case "$PROJECT" in
                 *"01 - AUTOYA"*|*"02 - WorkflowAuto"*|*"API"*|*AUTOYA*|*Autoya*|*WorkflowAuto*|*Workflow*)
                   CROISSANCE_AUTO_TICKETS="$CROISSANCE_AUTO_TICKETS|$TICKET_LINE"
@@ -145,11 +146,26 @@ jobs:
               return
             fi
             
-            # Clean tickets list
+            # Clean tickets list (format: PROJECT|||TICKET_ID: TITLE)
             TICKETS_CLEAN=$(echo "$TICKETS" | sed 's/^|//' | tr '|' '\n')
             TICKETS_COUNT=$(echo "$TICKETS_CLEAN" | grep -c . || echo "0")
-            TICKETS_LIST=$(echo "$TICKETS_CLEAN" | sed 's/^/- /')
-            TICKETS_ONELINE=$(echo "$TICKETS_CLEAN" | tr '\n' '; ' | sed 's/; $//')
+            
+            # Extract just ticket info for Claude (without project prefix)
+            TICKETS_ONELINE=$(echo "$TICKETS_CLEAN" | sed 's/.*|||//' | tr '\n' '; ' | sed 's/; $//')
+            
+            # Group tickets by project for display using awk
+            TICKETS_LIST=$(echo "$TICKETS_CLEAN" | sort | awk -F'\\|\\|\\|' '
+              NF >= 2 {
+                proj = $1
+                ticket = $2
+                if (proj != current_proj) {
+                  if (current_proj != "") print ""
+                  print proj ":"
+                  current_proj = proj
+                }
+                print "- " ticket
+              }
+            ')
             
             if [ "$TICKETS_COUNT" -eq 0 ]; then
               echo "No tickets for $INITIATIVE_NAME"
