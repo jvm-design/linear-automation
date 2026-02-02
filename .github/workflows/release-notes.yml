@@ -175,46 +175,52 @@ jobs:
             echo ""
             echo "=== Posting to $INITIATIVE_NAME ($TICKETS_COUNT tickets) ==="
             
-            # Generate user-friendly summary with Claude
-            PROMPT_FILE=$(mktemp)
-            echo "Tu es un Product Manager qui communique les mises a jour produit a toute l'entreprise (commerciaux, support, direction, clients)." > "$PROMPT_FILE"
-            echo "" >> "$PROMPT_FILE"
-            echo "Voici les tickets deployes en production:" >> "$PROMPT_FILE"
-            echo "$TICKETS_ONELINE" >> "$PROMPT_FILE"
-            echo "" >> "$PROMPT_FILE"
-            echo "Redige un resume en francais qui:" >> "$PROMPT_FILE"
-            echo "- Explique la VALEUR pour les utilisateurs (pas les details techniques)" >> "$PROMPT_FILE"
-            echo "- Est comprehensible par quelqu'un de non-technique" >> "$PROMPT_FILE"
-            echo "- Utilise un langage simple et concret" >> "$PROMPT_FILE"
-            echo "- Fait 2-3 phrases maximum (40 mots max)" >> "$PROMPT_FILE"
-            echo "" >> "$PROMPT_FILE"
-            echo "Exemples de bon ton:" >> "$PROMPT_FILE"
-            echo "- Les videos se chargent maintenant plus rapidement, meme avec une connexion lente." >> "$PROMPT_FILE"
-            echo "- Nouvelle fonctionnalite: vous pouvez desormais dupliquer vos projets en un clic." >> "$PROMPT_FILE"
-            echo "- Correction d'un probleme qui empechait certains utilisateurs de se connecter." >> "$PROMPT_FILE"
-            echo "" >> "$PROMPT_FILE"
-            echo "Ne mentionne pas les numeros de tickets. Ne fais pas de commentaire sur l'equipe." >> "$PROMPT_FILE"
+            # Get unique projects
+            UNIQUE_PROJECTS=$(echo "$TICKETS_CLEAN" | awk -F'\\|\\|\\|' '{print $1}' | sort -u)
             
-            PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
-            rm "$PROMPT_FILE"
+            # Generate summary for each project
+            SUMMARIES_FILE=$(mktemp)
+            for PROJECT in $UNIQUE_PROJECTS; do
+              echo "Generating summary for: $PROJECT"
+              
+              # Get tickets for this project
+              PROJECT_TICKETS=$(echo "$TICKETS_CLEAN" | grep "^$PROJECT|||" | sed 's/.*|||//' | tr '\n' '; ' | sed 's/; $//')
+              
+              # Generate summary with Claude for this project
+              PROMPT_FILE=$(mktemp)
+              echo "Tu es un Product Manager. Resume en UNE SEULE phrase (max 15 mots) ce qui a ete deploye." > "$PROMPT_FILE"
+              echo "Tickets: $PROJECT_TICKETS" >> "$PROMPT_FILE"
+              echo "La phrase doit etre comprehensible par un non-technique et expliquer la valeur pour l'utilisateur." >> "$PROMPT_FILE"
+              echo "Exemples: 'Amelioration de la capture automatique' ou 'Correction des problemes de synchronisation video'" >> "$PROMPT_FILE"
+              echo "Ne mentionne pas les numeros de tickets. Reponds UNIQUEMENT avec la phrase, rien d'autre." >> "$PROMPT_FILE"
+              
+              PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
+              rm "$PROMPT_FILE"
+              
+              CLAUDE_RESP=$(curl -s https://api.anthropic.com/v1/messages \
+                -H "Content-Type: application/json" \
+                -H "x-api-key: $ANTHROPIC_API_KEY" \
+                -H "anthropic-version: 2023-06-01" \
+                -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":50,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
+              
+              PROJECT_SUMMARY=$(echo "$CLAUDE_RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-100)
+              
+              # Extract short project name (remove prefix like "01 - ")
+              SHORT_PROJECT=$(echo "$PROJECT" | sed 's/^[0-9]* - //')
+              
+              echo "- $SHORT_PROJECT: $PROJECT_SUMMARY" >> "$SUMMARIES_FILE"
+              echo "  Summary: $PROJECT_SUMMARY"
+            done
             
-            CLAUDE_RESP=$(curl -s https://api.anthropic.com/v1/messages \
-              -H "Content-Type: application/json" \
-              -H "x-api-key: $ANTHROPIC_API_KEY" \
-              -H "anthropic-version: 2023-06-01" \
-              -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":200,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
+            SUMMARIES=$(cat "$SUMMARIES_FILE")
+            rm "$SUMMARIES_FILE"
             
-            SUMMARY=$(echo "$CLAUDE_RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-300)
-            echo "Summary: $SUMMARY"
-            
-            # Build body with user-friendly format
+            # Build body with per-project summaries
             BODY_FILE=$(mktemp)
             echo "Deploiement Production - $TODAY" > "$BODY_FILE"
             echo "" >> "$BODY_FILE"
-            if [ -n "$SUMMARY" ]; then
-              echo "$SUMMARY" >> "$BODY_FILE"
-              echo "" >> "$BODY_FILE"
-            fi
+            echo "$SUMMARIES" >> "$BODY_FILE"
+            echo "" >> "$BODY_FILE"
             echo "---" >> "$BODY_FILE"
             echo "" >> "$BODY_FILE"
             echo "Details techniques ($TICKETS_COUNT tickets):" >> "$BODY_FILE"
