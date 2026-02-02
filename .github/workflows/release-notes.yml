@@ -159,12 +159,29 @@ jobs:
             echo ""
             echo "=== Posting to $INITIATIVE_NAME ($TICKETS_COUNT tickets) ==="
             
-            # Generate summary with Claude
+            # Generate user-friendly summary with Claude
             PROMPT_FILE=$(mktemp)
-            echo "Tu es un tech lead. Resume ce deploiement production avec ces tickets:" > "$PROMPT_FILE"
+            cat > "$PROMPT_FILE" << 'PROMPT_END'
+Tu es un Product Manager qui communique les mises à jour produit à toute l'entreprise (commerciaux, support, direction, clients).
+
+Voici les tickets déployés en production:
+PROMPT_END
             echo "$TICKETS_ONELINE" >> "$PROMPT_FILE"
-            echo "Ecris 1-2 phrases factuelles (max 30 mots) decrivant ce qui a ete deploye." >> "$PROMPT_FILE"
-            echo "Ton: professionnel mais accessible. Pas de jargon. Pas de commentaire sur l'equipe." >> "$PROMPT_FILE"
+            cat >> "$PROMPT_FILE" << 'PROMPT_END'
+
+Rédige un résumé en français qui:
+- Explique la VALEUR pour les utilisateurs (pas les détails techniques)
+- Est compréhensible par quelqu'un de non-technique
+- Utilise un langage simple et concret
+- Fait 2-3 phrases maximum (40 mots max)
+
+Exemples de bon ton:
+- "Les vidéos se chargent maintenant plus rapidement, même avec une connexion lente."
+- "Nouvelle fonctionnalité : vous pouvez désormais dupliquer vos projets en un clic."
+- "Correction d'un problème qui empêchait certains utilisateurs de se connecter."
+
+Ne mentionne pas les numéros de tickets. Ne fais pas de commentaire sur l'équipe.
+PROMPT_END
             
             PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
             rm "$PROMPT_FILE"
@@ -173,21 +190,23 @@ jobs:
               -H "Content-Type: application/json" \
               -H "x-api-key: $ANTHROPIC_API_KEY" \
               -H "anthropic-version: 2023-06-01" \
-              -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
+              -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":200,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
             
-            SUMMARY=$(echo "$CLAUDE_RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-250)
+            SUMMARY=$(echo "$CLAUDE_RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-300)
             echo "Summary: $SUMMARY"
             
-            # Build body
+            # Build body with user-friendly format
             BODY_FILE=$(mktemp)
             echo "Deploiement Production - $TODAY" > "$BODY_FILE"
             echo "" >> "$BODY_FILE"
-            echo "Changements deployes ($TICKETS_COUNT):" >> "$BODY_FILE"
-            echo "$TICKETS_LIST" >> "$BODY_FILE"
-            echo "" >> "$BODY_FILE"
             if [ -n "$SUMMARY" ]; then
-              echo "Resume: $SUMMARY" >> "$BODY_FILE"
+              echo "$SUMMARY" >> "$BODY_FILE"
+              echo "" >> "$BODY_FILE"
             fi
+            echo "---" >> "$BODY_FILE"
+            echo "" >> "$BODY_FILE"
+            echo "Details techniques ($TICKETS_COUNT tickets):" >> "$BODY_FILE"
+            echo "$TICKETS_LIST" >> "$BODY_FILE"
             
             BODY_CONTENT=$(cat "$BODY_FILE")
             echo "Body content:"
