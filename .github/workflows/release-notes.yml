@@ -161,27 +161,23 @@ jobs:
             
             # Generate user-friendly summary with Claude
             PROMPT_FILE=$(mktemp)
-            cat > "$PROMPT_FILE" << 'PROMPT_END'
-Tu es un Product Manager qui communique les mises à jour produit à toute l'entreprise (commerciaux, support, direction, clients).
-
-Voici les tickets déployés en production:
-PROMPT_END
+            echo "Tu es un Product Manager qui communique les mises a jour produit a toute l'entreprise (commerciaux, support, direction, clients)." > "$PROMPT_FILE"
+            echo "" >> "$PROMPT_FILE"
+            echo "Voici les tickets deployes en production:" >> "$PROMPT_FILE"
             echo "$TICKETS_ONELINE" >> "$PROMPT_FILE"
-            cat >> "$PROMPT_FILE" << 'PROMPT_END'
-
-Rédige un résumé en français qui:
-- Explique la VALEUR pour les utilisateurs (pas les détails techniques)
-- Est compréhensible par quelqu'un de non-technique
-- Utilise un langage simple et concret
-- Fait 2-3 phrases maximum (40 mots max)
-
-Exemples de bon ton:
-- "Les vidéos se chargent maintenant plus rapidement, même avec une connexion lente."
-- "Nouvelle fonctionnalité : vous pouvez désormais dupliquer vos projets en un clic."
-- "Correction d'un problème qui empêchait certains utilisateurs de se connecter."
-
-Ne mentionne pas les numéros de tickets. Ne fais pas de commentaire sur l'équipe.
-PROMPT_END
+            echo "" >> "$PROMPT_FILE"
+            echo "Redige un resume en francais qui:" >> "$PROMPT_FILE"
+            echo "- Explique la VALEUR pour les utilisateurs (pas les details techniques)" >> "$PROMPT_FILE"
+            echo "- Est comprehensible par quelqu'un de non-technique" >> "$PROMPT_FILE"
+            echo "- Utilise un langage simple et concret" >> "$PROMPT_FILE"
+            echo "- Fait 2-3 phrases maximum (40 mots max)" >> "$PROMPT_FILE"
+            echo "" >> "$PROMPT_FILE"
+            echo "Exemples de bon ton:" >> "$PROMPT_FILE"
+            echo "- Les videos se chargent maintenant plus rapidement, meme avec une connexion lente." >> "$PROMPT_FILE"
+            echo "- Nouvelle fonctionnalite: vous pouvez desormais dupliquer vos projets en un clic." >> "$PROMPT_FILE"
+            echo "- Correction d'un probleme qui empechait certains utilisateurs de se connecter." >> "$PROMPT_FILE"
+            echo "" >> "$PROMPT_FILE"
+            echo "Ne mentionne pas les numeros de tickets. Ne fais pas de commentaire sur l'equipe." >> "$PROMPT_FILE"
             
             PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
             rm "$PROMPT_FILE"
