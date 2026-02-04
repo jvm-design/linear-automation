@@ -1,0 +1,55 @@
+name: Update Team Baselines
+
+on:
+  schedule:
+    # Toutes les 3 semaines le lundi à 1h UTC
+    # Le job vérifie si c'est la bonne semaine (modulo 3)
+    - cron: '0 1 * * 1'
+  workflow_dispatch:  # Permet de déclencher manuellement
+
+jobs:
+  update-baselines:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check if it's the right week (every 3 weeks)
+        id: check_week
+        run: |
+          # Calculer le numéro de semaine depuis une date de référence
+          # Epoch week: semaines depuis le 1er janvier 1970
+          WEEK_NUMBER=$(( $(date +%s) / 604800 ))
+          
+          # Vérifier si c'est une semaine multiple de 3
+          if [ $((WEEK_NUMBER % 3)) -eq 0 ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+            echo "✅ Semaine $WEEK_NUMBER - C'est le moment de recalculer les baselines"
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+            echo "⏭️ Semaine $WEEK_NUMBER - Pas cette semaine (toutes les 3 semaines)"
+          fi
+
+      - name: Update baselines via API
+        if: steps.check_week.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "🔄 Recalcul des baselines depuis les 3 derniers cycles..."
+          
+          RESPONSE=$(curl -s -X POST \
+            "https://web-production-a4989.up.railway.app/api/baselines/update?cycles=3" \
+            -H "Content-Type: application/json")
+          
+          echo "📊 Réponse:"
+          echo "$RESPONSE" | jq .
+          
+          # Vérifier si succès
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "✅ Baselines mises à jour avec succès!"
+          else
+            echo "❌ Erreur lors de la mise à jour"
+            exit 1
+          fi
+
+      - name: Skip notification
+        if: steps.check_week.outputs.run == 'false' && github.event_name != 'workflow_dispatch'
+        run: |
+          echo "⏭️ Mise à jour ignorée - prochaine exécution dans $((3 - ($(( $(date +%s) / 604800 )) % 3))) semaine(s)"
