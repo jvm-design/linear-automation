@@ -3,3 +3,6 @@ node_modules/
 npm-debug.log*
 .nyc_output
 .DS_Store
+
+# Generated baselines (will be recalculated on server)
+team-baselines.json

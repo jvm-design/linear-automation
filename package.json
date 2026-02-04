@@ -1,14 +1,19 @@
 {
   "name": "linear-automation",
   "version": "1.0.0",
-  "description": "Automation to transfer completed Product Design issues to DEV team triage",
+  "description": "Automation to transfer completed Product Design issues to DEV team triage + auto-estimation",
   "main": "webhook-server.js",
   "scripts": {
     "start": "node webhook-server.js",
     "dev": "nodemon webhook-server.js",
-    "test": "node test-webhook.js"
+    "test": "node test-webhook.js",
+    "test:estimate": "node test-estimate.js",
+    "velocity": "node velocity-tracker.js",
+    "velocity:update": "node velocity-tracker.js --update",
+    "baselines:update": "node velocity-tracker.js --update"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@linear/sdk": "^30.0.0",
     "express": "^4.18.2",
     "dotenv": "^16.3.1",
@@ -17,7 +22,7 @@
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
-  "keywords": ["linear", "webhook", "automation", "team-management"],
+  "keywords": ["linear", "webhook", "automation", "team-management", "estimation"],
   "author": "",
   "license": "ISC"
 }
