@@ -161,7 +161,7 @@ class EstimationService {
    * Met à jour l'estimation dans Linear
    */
   async updateIssueEstimate(issueId, estimate) {
-    await this.linearClient.issueUpdate(issueId, {
+    await this.linearClient.updateIssue(issueId, {
       estimate
     });
     console.log(`[Estimation] Issue ${issueId} mise à jour avec estimate: ${estimate}`);
