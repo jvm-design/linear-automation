@@ -1,0 +1,324 @@
+# =============================================================================
+# Orphan Commit Tracker — develop branch
+# =============================================================================
+# Surveille les push sur `develop`. Pour chaque commit sans référence TNS-XXX,
+# crée un ticket Linear avec description générée par Claude.
+#
+# Distingue :
+#   🚨 Push direct (pas de PR) → mauvaise pratique
+#   ⚠️  PR mergée sans ticket  → process PR ok, mais ticket manquant
+#
+# 📋 Secrets GitHub requis :
+#   - LINEAR_API_KEY      → Linear > Settings > Account > API
+#   - ANTHROPIC_API_KEY   → console.anthropic.com > API Keys
+#
+# 🆔 IDs Linear (à jour au 2026-02-06) :
+#   - Team DEV:           dbef6ee2-55dc-4999-9f7d-64aed959e3f1
+#   - Projet Core:        5d79313e-aefe-433d-a887-41a9e487973c
+#   - Milestone T9:       d361ac92-5e34-4986-911a-f26d32c949fe
+#   - Label BACK:         565cbb49-ecae-453e-8b1f-85ce6dc30d90
+#   - Label FRONT:        4d665e51-efcd-4aba-aba2-62fe5a24ca78
+# =============================================================================
+
+name: Orphan Commit Tracker
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+env:
+  LINEAR_TEAM_ID: "dbef6ee2-55dc-4999-9f7d-64aed959e3f1"
+  LINEAR_PROJECT_CORE_ID: "5d79313e-aefe-433d-a887-41a9e487973c"
+  LINEAR_MILESTONE_T9_ID: "d361ac92-5e34-4986-911a-f26d32c949fe"
+  LABEL_BACK_ID: "565cbb49-ecae-453e-8b1f-85ce6dc30d90"
+  LABEL_FRONT_ID: "4d665e51-efcd-4aba-aba2-62fe5a24ca78"
+
+jobs:
+  track-orphan-commits:
+    runs-on: ubuntu-latest
+    steps:
+      # ─────────────────────────────────────────────
+      # 1. Checkout pour accéder aux diffs
+      # ─────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ─────────────────────────────────────────────
+      # 2. Analyser les commits du push et traiter
+      #    les orphelins un par un
+      # ─────────────────────────────────────────────
+      - name: Process orphan commits
+        uses: actions/github-script@v7
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LINEAR_TEAM_ID: ${{ env.LINEAR_TEAM_ID }}
+          LINEAR_PROJECT_CORE_ID: ${{ env.LINEAR_PROJECT_CORE_ID }}
+          LINEAR_MILESTONE_T9_ID: ${{ env.LINEAR_MILESTONE_T9_ID }}
+          LABEL_BACK_ID: ${{ env.LABEL_BACK_ID }}
+          LABEL_FRONT_ID: ${{ env.LABEL_FRONT_ID }}
+        with:
+          script: |
+            const { execSync } = require('child_process');
+
+            // ── Config : GitHub username → Linear user ID ──
+            // ⚠️ REMPLACER les GitHub usernames (clés) par les vrais
+            const AUTHOR_MAP = {
+              'Ketlark':  { linearId: '16ded281-64e7-47d9-8c9f-7f0c708574ec', name: 'Kevin' },
+              'tnslreb': { linearId: '1f07cc44-8f93-4532-b472-44301ff5d84c', name: 'Lucien' },
+              'panegna': { linearId: '31f7de2f-8e8c-4281-9236-e5c3d01ddeff', name: 'Panegna' },
+              'Mitrakas51':    { linearId: '62c43e3d-4443-46c0-884c-6f3bb2cf2c0d', name: 'Seb' },
+            };
+
+            // ── Récupérer les commits du push ──
+            const commits = context.payload.commits || [];
+            console.log(`📦 Push contient ${commits.length} commit(s)`);
+
+            // ── Filtrer les orphelins ──
+            const orphans = [];
+            for (const commit of commits) {
+              const msg = commit.message;
+              const sha = commit.id;
+              const shortSha = sha.substring(0, 7);
+
+              // Skip si déjà un ticket TNS-XXX
+              if (/TNS-\d+/i.test(msg)) {
+                console.log(`✅ ${shortSha} — a un ticket : ${msg.split('\n')[0]}`);
+                continue;
+              }
+
+              // Détecter si c'est un merge commit (PR) ou un push direct
+              const isMergeCommit = /^Merge (pull request|branch)/i.test(msg);
+
+              // Extraire le numéro de PR si c'est un merge
+              const prMatch = msg.match(/Merge pull request #(\d+)/);
+              const prNumber = prMatch ? prMatch[1] : null;
+
+              // Détecter l'origine
+              let origin;
+              if (isMergeCommit && prNumber) {
+                origin = 'pr_merge';
+              } else if (isMergeCommit) {
+                origin = 'branch_merge';
+              } else {
+                origin = 'direct_push';
+              }
+
+              console.log(`🔍 ${shortSha} — orphelin (${origin}) : ${msg.split('\n')[0]}`);
+              orphans.push({ sha, shortSha, msg, origin, prNumber, author: commit.author });
+            }
+
+            if (orphans.length === 0) {
+              console.log('🎉 Aucun commit orphelin — tout est clean !');
+              return;
+            }
+
+            console.log(`\n⚠️ ${orphans.length} commit(s) orphelin(s) à traiter\n`);
+
+            // ── Traiter chaque orphelin ──
+            for (const orphan of orphans) {
+              try {
+                console.log(`\n━━━ Traitement : ${orphan.shortSha} (${orphan.origin}) ━━━`);
+
+                // 1. Récupérer le diff du commit
+                let diff;
+                try {
+                  diff = execSync(`git diff ${orphan.sha}~1 ${orphan.sha} --stat && echo "---PATCH---" && git diff ${orphan.sha}~1 ${orphan.sha} -- . ':(exclude)package-lock.json' ':(exclude)*.lock'`, {
+                    encoding: 'utf-8',
+                    maxBuffer: 1024 * 1024
+                  });
+                } catch (e) {
+                  diff = execSync(`git show ${orphan.sha} --stat`, { encoding: 'utf-8' });
+                }
+                const truncatedDiff = diff.substring(0, 6000);
+
+                // 2. Récupérer les infos de la PR si c'est un merge
+                let prInfo = null;
+                if (orphan.prNumber) {
+                  try {
+                    const { data: pr } = await github.rest.pulls.get({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      pull_number: parseInt(orphan.prNumber)
+                    });
+                    prInfo = {
+                      title: pr.title,
+                      body: pr.body || '',
+                      author: pr.user.login,
+                      url: pr.html_url
+                    };
+                  } catch (e) {
+                    console.log(`  ⚠️ Impossible de récupérer la PR #${orphan.prNumber}`);
+                  }
+                }
+
+                // 3. Résoudre l'auteur
+                const gitAuthor = prInfo?.author || orphan.author?.username || orphan.author?.name || 'unknown';
+                const authorInfo = AUTHOR_MAP[gitAuthor] || { linearId: null, name: gitAuthor };
+
+                // 4. Appeler Claude pour analyser le diff
+                const originLabel = {
+                  'direct_push': '🚨 PUSH DIRECT sur develop (sans PR)',
+                  'pr_merge': `⚠️ PR #${orphan.prNumber} mergée sans ticket TNS`,
+                  'branch_merge': '⚠️ Merge de branche sans ticket TNS'
+                }[orphan.origin];
+
+                const claudePrompt = `Tu es un assistant technique pour l'équipe TNS (The Next Stories), startup de visualisation IA automobile.
+
+            Stack : NestJS, DynamoDB, AWS Lambda, Cognito, Stripe, Pulumi (back) / Flutter, React/Next.js, Tailwind, Shadcn (front).
+
+            Analyse ce commit et retourne un JSON avec exactement cette structure :
+            {
+              "layer": "BACK" ou "FRONT" ou "FULL-STACK",
+              "title": "titre court et descriptif du changement (max 80 chars, en français)",
+              "description": "description markdown du ticket"
+            }
+
+            Pour le layer :
+            - BACK : src/api, src/services, src/modules, src/lambda, src/infra, serverless, pulumi, *.service.ts, *.controller.ts, *.module.ts, *.resolver.ts, migrations/, NestJS/DynamoDB/AWS/Stripe/Cognito
+            - FRONT : lib/, widgets/, screens/, pages/, components/, app/, styles/, *.dart, *.tsx, *.jsx, *.css, Flutter/React/UI
+            - FULL-STACK : touche significativement les deux couches
+
+            Pour le title : un titre de ticket clair, pas le message de commit brut. Ex: "Correction du refresh token Cognito" et non "fix token bug".
+
+            Pour la description :
+            1. Résumé en 1-2 phrases (pourquoi + quoi)
+            2. Changements clés
+            3. Impact potentiel
+            4. Points d'attention si pertinent
+
+            Contexte :
+            - Origine : ${originLabel}
+            - Message du commit : ${orphan.msg}
+            - Auteur : ${authorInfo.name}
+            ${prInfo ? `- PR : ${prInfo.title}\n- Description PR : ${prInfo.body.substring(0, 500)}` : ''}
+
+            Diff :
+            ${truncatedDiff}
+
+            IMPORTANT : Retourne UNIQUEMENT le JSON, sans backticks ni markdown autour.`;
+
+                const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': process.env.ANTHROPIC_API_KEY,
+                    'anthropic-version': '2023-06-01'
+                  },
+                  body: JSON.stringify({
+                    model: 'claude-sonnet-4-20250514',
+                    max_tokens: 1024,
+                    messages: [{ role: 'user', content: claudePrompt }]
+                  })
+                });
+
+                const claudeData = await claudeResponse.json();
+                const rawText = claudeData.content?.[0]?.text || '';
+
+                let analysis;
+                try {
+                  analysis = JSON.parse(rawText);
+                } catch (e) {
+                  console.log(`  ⚠️ Claude n'a pas retourné du JSON valide, fallback`);
+                  analysis = {
+                    layer: 'BACK',
+                    title: orphan.msg.split('\n')[0].substring(0, 80),
+                    description: 'Description auto-générée indisponible. Voir le commit pour le détail.'
+                  };
+                }
+
+                // 5. Construire la description complète pour Linear
+                const originEmoji = orphan.origin === 'direct_push' ? '🚨' : '⚠️';
+                const originMsg = {
+                  'direct_push': '**Push direct** sur `develop` — ce commit aurait dû passer par une Pull Request.',
+                  'pr_merge': `**PR [#${orphan.prNumber}](${prInfo?.url || ''})** mergée sans ticket Linear — pensez à créer le ticket avant de coder.`,
+                  'branch_merge': '**Merge de branche** sans ticket Linear.'
+                }[orphan.origin];
+
+                const bestPractice = orphan.origin === 'direct_push'
+                  ? `> 💡 **Bonne pratique :** Créer un ticket Linear → ouvrir une PR depuis une branche feature → merger via PR.\n> Le push direct sur \`develop\` empêche la review de code et le suivi du travail.`
+                  : `> 💡 **Bonne pratique :** Créer le ticket Linear d'abord (Alt+C), copier le nom de branche, puis coder.\n> Ça prend 10 secondes et ça donne de la visibilité à toute l'équipe.`;
+
+                const fullDescription = `${analysis.description}
+
+            ---
+
+            ${originEmoji} **Origine :** ${originMsg}
+
+            ${bestPractice}
+
+            ---
+            📌 **Commit :** [\`${orphan.shortSha}\`](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${orphan.sha})
+            👤 **Auteur :** ${authorInfo.name}
+            🏷️ **Layer :** ${analysis.layer}
+            🤖 *Ticket créé automatiquement — description générée par Claude depuis le diff*`;
+
+                // 6. Déterminer les labels
+                let labelIds;
+                switch (analysis.layer) {
+                  case 'FRONT':
+                    labelIds = [process.env.LABEL_FRONT_ID];
+                    break;
+                  case 'FULL-STACK':
+                    labelIds = [process.env.LABEL_BACK_ID, process.env.LABEL_FRONT_ID];
+                    break;
+                  default:
+                    labelIds = [process.env.LABEL_BACK_ID];
+                }
+
+                // 7. Créer le ticket Linear
+                const input = {
+                  teamId: process.env.LINEAR_TEAM_ID,
+                  title: analysis.title,
+                  description: fullDescription,
+                  labelIds: labelIds,
+                  projectId: process.env.LINEAR_PROJECT_CORE_ID,
+                  projectMilestoneId: process.env.LINEAR_MILESTONE_T9_ID,
+                  priority: orphan.origin === 'direct_push' ? 2 : 3
+                };
+
+                if (authorInfo.linearId) {
+                  input.assigneeId = authorInfo.linearId;
+                }
+
+                const linearResponse = await fetch('https://api.linear.app/graphql', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': process.env.LINEAR_API_KEY
+                  },
+                  body: JSON.stringify({
+                    query: `mutation($input: IssueCreateInput!) {
+                      issueCreate(input: $input) {
+                        success
+                        issue { id identifier url }
+                      }
+                    }`,
+                    variables: { input }
+                  })
+                });
+
+                const linearData = await linearResponse.json();
+
+                if (linearData.data?.issueCreate?.success) {
+                  const issue = linearData.data.issueCreate.issue;
+                  console.log(`  ✅ Ticket créé : ${issue.identifier} → ${issue.url}`);
+                  console.log(`     Layer: ${analysis.layer} | Assignee: ${authorInfo.name} | Origin: ${orphan.origin}`);
+                } else {
+                  console.log(`  ❌ Échec création ticket :`, JSON.stringify(linearData));
+                }
+
+              } catch (error) {
+                console.log(`  ❌ Erreur pour ${orphan.shortSha} :`, error.message);
+              }
+
+              // Pause entre les appels API pour éviter le rate limiting
+              await new Promise(r => setTimeout(r, 1000));
+            }
+
+            console.log('\n━━━ Traitement terminé ━━━');
