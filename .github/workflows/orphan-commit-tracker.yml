@@ -227,7 +227,7 @@ jobs:
             {
               "layer": "BACK" ou "FRONT" ou "FULL-STACK",
               "title": "titre court et descriptif du changement (max 80 chars, en français)",
-              "description": "description markdown du ticket"
+              "description": "description markdown du ticket (format ci-dessous)"
             }
 
             Pour le layer :
@@ -237,11 +237,30 @@ jobs:
 
             Pour le title : un titre de ticket clair, pas le message de commit brut. Ex: "Correction du refresh token Cognito" et non "fix token bug".
 
-            Pour la description :
-            1. Résumé en 1-2 phrases (pourquoi + quoi)
-            2. Changements clés
-            3. Impact potentiel
-            4. Points d'attention si pertinent
+            Pour la description, utilise EXACTEMENT ce format markdown structuré :
+
+            ## ✅ Definition of Done
+
+            | Critère | Statut |
+            |---------|--------|
+            | (critère déduit du diff) | ✅ Done |
+            | (un autre critère) | ✅ Done |
+
+            ## Travaux réalisés
+
+            ### 1. (Titre du premier groupe de changements)
+            - Détail du changement
+            - Autre détail
+
+            ### 2. (Titre du deuxième groupe si applicable)
+            - Détail du changement
+
+            Règles pour la description :
+            - La table "Definition of Done" liste les critères fonctionnels/techniques déduits du diff. Tous en ✅ Done puisque le code est déjà mergé.
+            - "Travaux réalisés" regroupe les changements par thème/module avec des sous-sections numérotées.
+            - Sois précis et technique : mentionne les fichiers, services, endpoints, patterns modifiés.
+            - Écris en français.
+            - N'ajoute PAS de section "Impact potentiel" ou "Points d'attention" — reste factuel sur ce qui a été fait.
 
             Contexte :
             - Origine : ${originLabel}
@@ -263,7 +282,7 @@ jobs:
                   },
                   body: JSON.stringify({
                     model: 'claude-sonnet-4-20250514',
-                    max_tokens: 1024,
+                    max_tokens: 2048,
                     messages: [{ role: 'user', content: claudePrompt }]
                   })
                 });
