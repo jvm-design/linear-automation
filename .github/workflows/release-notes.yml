@@ -182,32 +182,29 @@ jobs:
             echo "DEBUG: Tickets content:"
             cat "$TICKETS_FILE"
             
-            # Generate summary for all tickets at once (simpler approach)
-            ALL_TICKETS_TITLES=$(cat "$TICKETS_FILE" | while IFS='|||' read -r proj ticket; do
-              [ -n "$ticket" ] && echo "$ticket"
-            done | tr '\n' '; ' | sed 's/; $//')
+            # Format tickets for Claude prompt
+            FORMATTED_TICKETS=$(cat "$TICKETS_FILE" | while IFS='|||' read -r proj ticket; do
+              [ -n "$ticket" ] && echo "- $proj: $ticket"
+            done)
             
-            echo "DEBUG: All tickets for Claude: $ALL_TICKETS_TITLES"
+            echo "DEBUG: Formatted tickets:"
+            echo "$FORMATTED_TICKETS"
             
             # Generate summaries grouped by project using Claude
             PROMPT_FILE=$(mktemp)
-            cat > "$PROMPT_FILE" << PROMPT_EOF
-Tu es un Product Manager. Voici des tickets deployes en production, groupes par projet.
-
-Tickets:
-$(cat "$TICKETS_FILE" | while IFS='|||' read -r proj ticket; do
-  [ -n "$ticket" ] && echo "- $proj: $ticket"
-done)
-
-Pour CHAQUE projet different, ecris UNE ligne au format:
-- NomProjet: Resume en 10-15 mots de ce qui a ete deploye
-
-Regles:
-- Resume comprehensible par un non-technique
-- Explique la valeur pour l'utilisateur
-- Ne mentionne pas les numeros de tickets (TNS-xxx)
-- Reponds UNIQUEMENT avec les lignes de resume, rien d'autre
-PROMPT_EOF
+            echo "Tu es un Product Manager. Voici des tickets deployes en production, groupes par projet." > "$PROMPT_FILE"
+            echo "" >> "$PROMPT_FILE"
+            echo "Tickets:" >> "$PROMPT_FILE"
+            echo "$FORMATTED_TICKETS" >> "$PROMPT_FILE"
+            echo "" >> "$PROMPT_FILE"
+            echo "Pour CHAQUE projet different, ecris UNE ligne au format:" >> "$PROMPT_FILE"
+            echo "- NomProjet: Resume en 10-15 mots de ce qui a ete deploye" >> "$PROMPT_FILE"
+            echo "" >> "$PROMPT_FILE"
+            echo "Regles:" >> "$PROMPT_FILE"
+            echo "- Resume comprehensible par un non-technique" >> "$PROMPT_FILE"
+            echo "- Explique la valeur pour l'utilisateur" >> "$PROMPT_FILE"
+            echo "- Ne mentionne pas les numeros de tickets (TNS-xxx)" >> "$PROMPT_FILE"
+            echo "- Reponds UNIQUEMENT avec les lignes de resume, rien d'autre" >> "$PROMPT_FILE"
             
             echo "DEBUG: Prompt content:"
             cat "$PROMPT_FILE"
