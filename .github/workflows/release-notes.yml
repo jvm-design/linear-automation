@@ -174,17 +174,35 @@ jobs:
             
             echo ""
             echo "=== Posting to $INITIATIVE_NAME ($TICKETS_COUNT tickets) ==="
+            echo "DEBUG: TICKETS_CLEAN content:"
+            echo "$TICKETS_CLEAN"
             
-            # Get unique projects
-            UNIQUE_PROJECTS=$(echo "$TICKETS_CLEAN" | awk -F'\\|\\|\\|' '{print $1}' | sort -u)
+            # Get unique projects (handle spaces in names by using temp file)
+            PROJECTS_FILE=$(mktemp)
+            echo "$TICKETS_CLEAN" | awk -F'\\|\\|\\|' 'NF>=2 {print $1}' | sort -u > "$PROJECTS_FILE"
+            
+            echo "DEBUG: Unique projects found:"
+            cat "$PROJECTS_FILE"
             
             # Generate summary for each project
             SUMMARIES_FILE=$(mktemp)
-            for PROJECT in $UNIQUE_PROJECTS; do
-              echo "Generating summary for: $PROJECT"
+            while IFS= read -r PROJECT; do
+              # Skip empty lines
+              [ -z "$PROJECT" ] && continue
               
-              # Get tickets for this project
-              PROJECT_TICKETS=$(echo "$TICKETS_CLEAN" | grep "^$PROJECT|||" | sed 's/.*|||//' | tr '\n' '; ' | sed 's/; $//')
+              echo "Generating summary for: [$PROJECT]"
+              
+              # Get tickets for this project (escape special chars for grep)
+              PROJECT_ESCAPED=$(echo "$PROJECT" | sed 's/[[\.*^$()+?{|]/\\&/g')
+              PROJECT_TICKETS=$(echo "$TICKETS_CLEAN" | grep "^${PROJECT_ESCAPED}|||" | awk -F'\\|\\|\\|' '{print $2}' | tr '\n' '; ' | sed 's/; $//')
+              
+              echo "DEBUG: Tickets for $PROJECT: $PROJECT_TICKETS"
+              
+              # Skip if no tickets found
+              if [ -z "$PROJECT_TICKETS" ]; then
+                echo "  No tickets found for this project, skipping"
+                continue
+              fi
               
               # Generate summary with Claude for this project
               PROMPT_FILE=$(mktemp)
@@ -197,23 +215,39 @@ jobs:
               PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
               rm "$PROMPT_FILE"
               
+              echo "DEBUG: Calling Claude API..."
               CLAUDE_RESP=$(curl -s https://api.anthropic.com/v1/messages \
                 -H "Content-Type: application/json" \
                 -H "x-api-key: $ANTHROPIC_API_KEY" \
                 -H "anthropic-version: 2023-06-01" \
                 -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":50,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
               
+              echo "DEBUG: Claude response: $CLAUDE_RESP"
+              
               PROJECT_SUMMARY=$(echo "$CLAUDE_RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-100)
+              
+              # Skip if summary contains error message or is empty
+              if [ -z "$PROJECT_SUMMARY" ] || echo "$PROJECT_SUMMARY" | grep -qi "je ne vois"; then
+                echo "  Invalid summary, skipping"
+                continue
+              fi
               
               # Extract short project name (remove prefix like "01 - ")
               SHORT_PROJECT=$(echo "$PROJECT" | sed 's/^[0-9]* - //')
               
               echo "- $SHORT_PROJECT: $PROJECT_SUMMARY" >> "$SUMMARIES_FILE"
               echo "  Summary: $PROJECT_SUMMARY"
-            done
+            done < "$PROJECTS_FILE"
+            rm "$PROJECTS_FILE"
             
-            SUMMARIES=$(cat "$SUMMARIES_FILE")
-            rm "$SUMMARIES_FILE"
+            SUMMARIES=$(cat "$SUMMARIES_FILE" 2>/dev/null || echo "")
+            rm -f "$SUMMARIES_FILE"
+            
+            # Check if we have valid summaries
+            if [ -z "$SUMMARIES" ]; then
+              echo "No valid summaries generated, skipping post"
+              return
+            fi
             
             # Build body with per-project summaries
             BODY_FILE=$(mktemp)
