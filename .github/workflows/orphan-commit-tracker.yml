@@ -72,7 +72,7 @@ jobs:
               'tnslreb':       { linearId: '1f07cc44-8f93-4532-b472-44301ff5d84c', name: 'Lucien' },
               'panegna':       { linearId: '31f7de2f-8e8c-4281-9236-e5c3d01ddeff', name: 'Panegna' },
               'Mitrakas51':    { linearId: '62c43e3d-4443-46c0-884c-6f3bb2cf2c0d', name: 'Seb' },
-              'jvm-design':    { linearId: null, name: 'Jaime' },
+              'jvm-design':    { linearId: '051a13e5-54f8-4767-9e5d-31bb19e115d0', name: 'Jaime' },
             };
 
             // ── Helper : requête GraphQL Linear ──
