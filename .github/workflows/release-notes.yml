@@ -95,21 +95,21 @@ jobs:
               # Store ticket with project name for grouping (format: PROJECT|||TICKET_ID: TITLE)
               TICKET_LINE="$PROJECT|||$TICKET_ID: $TITLE"
               
-              # Categorize by project
+              # Categorize by project (using @@@ as separator between tickets)
               # Croissance Auto 2026: 01 - AUTOYA, 02 - WorkflowAuto, API
               # Croissance Ecole: 03 - Tools IA, 04 - Studio, Deprecated
               # Performance & Scalabilite: 00 - Core
               case "$PROJECT" in
                 *"01 - AUTOYA"*|*"02 - WorkflowAuto"*|*"API"*|*AUTOYA*|*Autoya*|*WorkflowAuto*|*Workflow*)
-                  CROISSANCE_AUTO_TICKETS="$CROISSANCE_AUTO_TICKETS|$TICKET_LINE"
+                  CROISSANCE_AUTO_TICKETS="${CROISSANCE_AUTO_TICKETS}@@@${TICKET_LINE}"
                   echo "  -> Croissance Auto 2026"
                   ;;
                 *"03 - Tools"*|*"04 - Studio"*|*"Deprecated"*|*Tools*|*Studio*)
-                  CROISSANCE_ECOLE_TICKETS="$CROISSANCE_ECOLE_TICKETS|$TICKET_LINE"
+                  CROISSANCE_ECOLE_TICKETS="${CROISSANCE_ECOLE_TICKETS}@@@${TICKET_LINE}"
                   echo "  -> Croissance Ecole"
                   ;;
                 *"00 - Core"*|*Core*)
-                  PERFORMANCE_TICKETS="$PERFORMANCE_TICKETS|$TICKET_LINE"
+                  PERFORMANCE_TICKETS="${PERFORMANCE_TICKETS}@@@${TICKET_LINE}"
                   echo "  -> Performance & Scalabilite"
                   ;;
                 *)
@@ -141,13 +141,13 @@ jobs:
             local TICKETS=$2
             local INITIATIVE_NAME=$3
             
-            if [ -z "$TICKETS" ] || [ "$TICKETS" == "|" ]; then
+            if [ -z "$TICKETS" ] || [ "$TICKETS" == "@@@" ]; then
               echo "No tickets for $INITIATIVE_NAME"
               return
             fi
             
-            # Clean tickets list (format: PROJECT|||TICKET_ID: TITLE)
-            TICKETS_CLEAN=$(echo "$TICKETS" | sed 's/^|//' | tr '|' '\n')
+            # Clean tickets list (format: PROJECT|||TICKET_ID: TITLE, separated by @@@)
+            TICKETS_CLEAN=$(echo "$TICKETS" | sed 's/^@@@//' | sed 's/@@@/\n/g')
             TICKETS_COUNT=$(echo "$TICKETS_CLEAN" | grep -c . || echo "0")
             
             # Extract just ticket info for Claude (without project prefix)
