@@ -265,7 +265,7 @@ jobs:
                     labelIds = [process.env.LABEL_FRONT_ID];
                     break;
                   case 'FULL-STACK':
-                    labelIds = [process.env.LABEL_BACK_ID, process.env.LABEL_FRONT_ID];
+                    labelIds = [process.env.LABEL_BACK_ID];
                     break;
                   default:
                     labelIds = [process.env.LABEL_BACK_ID];
