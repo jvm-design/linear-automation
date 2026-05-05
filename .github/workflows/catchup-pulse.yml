@@ -1,0 +1,135 @@
+name: Catch-up Pulse (17 Apr - 01 May)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  catchup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post catch-up pulse for missed weeks
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          SINCE="2026-04-17T00:00:00Z"
+          UNTIL="2026-05-01T00:00:00Z"
+
+          echo "=== Catch-up Pulse: 17/04 → 01/05 ==="
+
+          PROJECTS=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -d '{"query": "{ projects { nodes { id name } } }"}')
+
+          echo "$PROJECTS" | jq -c '.data.projects.nodes[] | select(.name | test("^0[0-4] -"))' | while read -r project; do
+            PROJECT_ID=$(echo "$project" | jq -r '.id')
+            PROJECT_NAME=$(echo "$project" | jq -r '.name')
+            echo ""
+            echo "Processing: $PROJECT_NAME"
+
+            ISSUES=$(curl -s -X POST https://api.linear.app/graphql \
+              -H "Content-Type: application/json" \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -d "{\"query\": \"{ project(id: \\\"$PROJECT_ID\\\") { issues(filter: { completedAt: { gte: \\\"$SINCE\\\", lt: \\\"$UNTIL\\\" } }) { nodes { identifier title description labels { nodes { name } } attachments { nodes { title sourceType } } } } } }\"}")
+
+            TOTAL=$(echo "$ISSUES" | jq '.data.project.issues.nodes | length')
+
+            if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" != "null" ]; then
+
+              BUGS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(.labels.nodes[]?.name | test("bug"; "i"))]')
+              BUGS_COUNT=$(echo "$BUGS_DATA" | jq 'length')
+              BUGS_IDS=$(echo "$BUGS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/, $//')
+
+              OTHERS_DATA=$(echo "$ISSUES" | jq '[.data.project.issues.nodes[] | select(([.labels.nodes[]?.name] | map(test("bug"; "i")) | any) | not)]')
+              OTHERS_COUNT=$(echo "$OTHERS_DATA" | jq 'length')
+              OTHERS_IDS=$(echo "$OTHERS_DATA" | jq -r '.[].identifier' | tr '\n' ', ' | sed 's/, $//')
+
+              echo "  Bugs: $BUGS_COUNT, Others: $OTHERS_COUNT"
+
+              BUGS_SUMMARY=""
+              OTHERS_SUMMARY=""
+
+              if [ "$BUGS_COUNT" -gt 0 ]; then
+                BUGS_CONTEXT=$(echo "$BUGS_DATA" | jq -r '.[:5][] | "\(.title) - \(.description // "NA" | gsub("\n"; " ") | .[0:120])"' 2>/dev/null | tr '\n' ' | ' | cut -c1-700)
+
+                PROMPT_FILE=$(mktemp)
+                echo "Contexte bugs corriges sur 2 semaines (titres, descriptions)." > "$PROMPT_FILE"
+                echo "Redige un resume en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
+                echo "Ton: decontracte mais professionnel, facile a comprendre pour tous." >> "$PROMPT_FILE"
+                echo "Decris CE QUI A ETE CORRIGE sans jargon technique complexe, sans numeros de tickets." >> "$PROMPT_FILE"
+                echo "Pas de commentaire sur lequipe." >> "$PROMPT_FILE"
+                echo "Contexte: $BUGS_CONTEXT" >> "$PROMPT_FILE"
+
+                PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
+                rm "$PROMPT_FILE"
+
+                RESP=$(curl -s https://api.anthropic.com/v1/messages \
+                  -H "Content-Type: application/json" \
+                  -H "x-api-key: $ANTHROPIC_API_KEY" \
+                  -H "anthropic-version: 2023-06-01" \
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
+
+                BUGS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-250)
+                echo "  Bugs summary: $BUGS_SUMMARY"
+              fi
+
+              if [ "$OTHERS_COUNT" -gt 0 ]; then
+                OTHERS_CONTEXT=$(echo "$OTHERS_DATA" | jq -r '.[:5][] | "\(.title) - \(.description // "NA" | gsub("\n"; " ") | .[0:120])"' 2>/dev/null | tr '\n' ' | ' | cut -c1-700)
+
+                PROMPT_FILE=$(mktemp)
+                echo "Contexte ameliorations livrees sur 2 semaines (titres, descriptions)." > "$PROMPT_FILE"
+                echo "Redige un resume en francais de 1-2 phrases (max 30 mots)." >> "$PROMPT_FILE"
+                echo "Ton: decontracte mais professionnel, facile a comprendre pour tous." >> "$PROMPT_FILE"
+                echo "Decris CE QUI A ETE AJOUTE ou AMELIORE sans jargon technique complexe, sans numeros de tickets." >> "$PROMPT_FILE"
+                echo "Pas de commentaire sur lequipe." >> "$PROMPT_FILE"
+                echo "Contexte: $OTHERS_CONTEXT" >> "$PROMPT_FILE"
+
+                PROMPT_JSON=$(jq -Rs '.' < "$PROMPT_FILE")
+                rm "$PROMPT_FILE"
+
+                RESP=$(curl -s https://api.anthropic.com/v1/messages \
+                  -H "Content-Type: application/json" \
+                  -H "x-api-key: $ANTHROPIC_API_KEY" \
+                  -H "anthropic-version: 2023-06-01" \
+                  -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":150,\"messages\":[{\"role\":\"user\",\"content\":$PROMPT_JSON}]}")
+
+                OTHERS_SUMMARY=$(echo "$RESP" | jq -r '.content[0].text // empty' | tr -d '\n' | cut -c1-250)
+                echo "  Others summary: $OTHERS_SUMMARY"
+              fi
+
+              BODY_FILE=$(mktemp)
+              echo "Rattrapage — Semaines du 17/04 au 01/05" > "$BODY_FILE"
+              echo "" >> "$BODY_FILE"
+              if [ "$BUGS_COUNT" -gt 0 ]; then
+                echo "Bugs corriges: $BUGS_COUNT" >> "$BODY_FILE"
+                [ -n "$BUGS_SUMMARY" ] && echo "$BUGS_SUMMARY" >> "$BODY_FILE"
+                echo "Tickets: $BUGS_IDS" >> "$BODY_FILE"
+                echo "" >> "$BODY_FILE"
+              fi
+              if [ "$OTHERS_COUNT" -gt 0 ]; then
+                echo "Ameliorations: $OTHERS_COUNT" >> "$BODY_FILE"
+                [ -n "$OTHERS_SUMMARY" ] && echo "$OTHERS_SUMMARY" >> "$BODY_FILE"
+                echo "Tickets: $OTHERS_IDS" >> "$BODY_FILE"
+              fi
+
+              BODY_CONTENT=$(cat "$BODY_FILE")
+              echo "  Final body:"
+              echo "$BODY_CONTENT"
+
+              QUERY=$(jq -n --arg pid "$PROJECT_ID" --arg body "$BODY_CONTENT" '{query: "mutation($input: ProjectUpdateCreateInput!) { projectUpdateCreate(input: $input) { success } }", variables: {input: {projectId: $pid, body: $body}}}')
+
+              RESULT=$(curl -s -X POST https://api.linear.app/graphql \
+                -H "Content-Type: application/json" \
+                -H "Authorization: $LINEAR_API_KEY" \
+                -d "$QUERY")
+
+              echo "  Result: $RESULT"
+              rm "$BODY_FILE"
+              echo "  Posted to $PROJECT_NAME"
+            else
+              echo "  No completed issues in this period"
+            fi
+          done
+          echo ""
+          echo "=== Catch-up done! ==="
