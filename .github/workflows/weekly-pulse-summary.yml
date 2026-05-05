@@ -2,14 +2,60 @@ name: Weekly Linear Pulse Summary
 
 on:
   schedule:
-    - cron: '0 15 * * 5'  # Every Friday at 16:00 Paris time (15:00 UTC)
+    - cron: '0 15 * * 1-5'  # Mon-Fri at 16:00 Paris time — only posts on last French business day
   workflow_dispatch:
 
 jobs:
   post-summary:
     runs-on: ubuntu-latest
     steps:
+      - name: Check if last business day of the week (French holidays)
+        id: check
+        run: |
+          HOLIDAYS_2026="2026-01-01 2026-04-06 2026-05-01 2026-05-14 2026-05-25 2026-06-04 2026-07-14 2026-08-15 2026-11-01 2026-11-11 2026-12-25"
+          HOLIDAYS_2027="2027-01-01 2027-03-29 2027-05-01 2027-05-13 2027-05-24 2027-06-03 2027-07-14 2027-08-15 2027-11-01 2027-11-11 2027-12-25"
+          HOLIDAYS="$HOLIDAYS_2026 $HOLIDAYS_2027"
+
+          TODAY=$(date -u +%Y-%m-%d)
+          TODAY_DOW=$(date -u +%u)
+
+          is_business_day() {
+            local d=$1
+            local dow=$(date -d "$d" +%u)
+            [ "$dow" -gt 5 ] && return 1
+            echo "$HOLIDAYS" | grep -q "$d" && return 1
+            return 0
+          }
+
+          # workflow_dispatch = always run
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+            echo "Manual trigger — running"
+            exit 0
+          fi
+
+          # Check remaining business days this week (Mon=1 ... Fri=5)
+          FOUND_NEXT=false
+          for i in 1 2 3 4; do
+            NEXT=$(date -d "$TODAY + $i days" +%Y-%m-%d)
+            NEXT_DOW=$(date -d "$NEXT" +%u)
+            [ "$NEXT_DOW" -gt 5 ] && break
+            if is_business_day "$NEXT"; then
+              FOUND_NEXT=true
+              break
+            fi
+          done
+
+          if [ "$FOUND_NEXT" = "false" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+            echo "Today ($TODAY) is the last business day of the week"
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+            echo "Not the last business day — next is $NEXT — skipping"
+          fi
+
       - name: Get issues and post summary
+        if: steps.check.outputs.run == 'true'
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
